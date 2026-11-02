@@ -1,4 +1,6 @@
 #include "DeckStyle.h"
+#include "BinaryData.h"
+#include <atomic>
 
 using namespace ui;
 
@@ -12,6 +14,60 @@ float hash (int i)
     x *= 0x5bd1e995u;
     x ^= x >> 15;
     return (float) (x & 0xffff) / 65535.0f;
+}
+
+std::atomic<int> skinNow { (int) deck::Skin::deck };
+
+juce::File skinFile()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Sound Artz/Cue Burn/skin.txt");
+}
+
+// White の文字: 埋め込んだ Murecho (太さ 500)
+juce::Font whiteFont (float size, bool)
+{
+    const juce::SharedResourcePointer<deck::WhiteFonts> fonts;
+    return juce::Font (juce::FontOptions (fonts->body).withHeight (size * 1.08f));
+}
+
+// White のノブ: 白い本体 (縁は上が明るく下が暗い、面は少しへこむ) + 柔らかい影 + 値の色の弧
+// 角度は 12 時から時計回り。弧は from から angle まで (両側に振れるノブは真ん中から)
+void drawWhiteKnob (juce::Graphics& g, juce::Point<float> c, float r, float from, float angle, float start, float end, juce::Colour accent)
+{
+    const float ringR = r * 1.32f + 2.0f, ringW = juce::jmax (3.0f, r * 0.15f);
+    auto at = [&] (float a, float rad) { return juce::Point<float> (c.x + std::sin (a) * rad, c.y - std::cos (a) * rad); };
+
+    const juce::PathStrokeType st (ringW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    juce::Path track, value;
+    track.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, start, end, true);
+    g.setColour (juce::Colour (0xffd9dde4));
+    g.strokePath (track, st);
+    const float a0 = juce::jmin (from, angle), a1 = juce::jmax (from, angle);
+    if (a1 - a0 > 0.01f)
+    {
+        value.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, a0, a1, true);
+        g.setColour (accent.withAlpha (0.13f));
+        g.strokePath (value, juce::PathStrokeType (ringW * 2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        const auto p0 = at (a0, ringR), p1 = at (a1, ringR);
+        g.setGradientFill (juce::ColourGradient (accent.brighter (0.45f), p0.x, p0.y, accent.darker (0.1f), p1.x, p1.y, false));
+        g.strokePath (value, st);
+    }
+
+    const auto bodyR = juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (c);
+    juce::Path body;
+    body.addEllipse (bodyR);
+    juce::DropShadow (juce::Colours::black.withAlpha (0.26f), juce::roundToInt (r * 0.8f), { 0, juce::roundToInt (r * 0.38f) }).drawForPath (g, body);
+    juce::DropShadow (juce::Colours::black.withAlpha (0.20f), 3, { 0, 1 }).drawForPath (g, body);
+    g.setGradientFill (juce::ColourGradient (juce::Colours::white, c.x, bodyR.getY(), juce::Colour (0xffbfc5ce), c.x, bodyR.getBottom(), false));
+    g.fillEllipse (bodyR);
+    const auto face = bodyR.reduced (r * 0.13f);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe3e6eb), c.x, face.getY(), juce::Colour (0xfffbfcfd), c.x, face.getBottom(), false));
+    g.fillEllipse (face);
+    g.setColour (juce::Colours::white.withAlpha (0.7f));
+    g.drawEllipse (face.reduced (0.5f), 1.0f);
+
+    g.setColour (accent.darker (0.15f));
+    g.drawLine ({ at (angle, r * 0.22f), at (angle, r * 0.68f) }, juce::jmax (2.0f, r * 0.09f));
 }
 
 // ヘアライン (横方向の細い筋)
@@ -53,8 +109,61 @@ void lightPipe (juce::Graphics& g, float x0, float x1, float y, juce::Colour col
 
 namespace deck
 {
+Skin currentSkin() noexcept { return (Skin) skinNow.load(); }
+
+void setSkin (Skin s) noexcept
+{
+    skinNow.store ((int) s);
+    const bool w = s == Skin::white;
+    ui::setFontOverride (w ? whiteFont : nullptr);
+    HelpLabel::idleColour = w ? whiteInk.withAlpha (0.78f) : mutedCol;
+    HelpLabel::hoverColour = w ? whiteInk : textCol;
+    HelpLabel::iconHover = w ? whiteTeal : teal;
+}
+
+void loadSkin()
+{
+    setSkin (skinFile().loadFileAsString().trim() == "white" ? Skin::white : Skin::deck);
+}
+
+void saveSkin()
+{
+    const auto f = skinFile();
+    f.getParentDirectory().createDirectory();
+    f.replaceWithText (white() ? "white" : "deck");
+}
+
+WhiteFonts::WhiteFonts()
+    : body (juce::Typeface::createSystemTypefaceFor (BinaryData::MurechoMedium_ttf, (size_t) BinaryData::MurechoMedium_ttfSize)),
+      logo (juce::Typeface::createSystemTypefaceFor (BinaryData::SedgwickAveDisplayRegular_ttf, (size_t) BinaryData::SedgwickAveDisplayRegular_ttfSize))
+{
+}
+
+juce::Font logoFont (float size)
+{
+    const juce::SharedResourcePointer<WhiteFonts> fonts;
+    return juce::Font (juce::FontOptions (fonts->logo).withHeight (size));
+}
+
+juce::Colour accent (juce::Colour c)
+{
+    if (! white())
+        return c;
+    if (c == orange || c == ledAmber)
+        return whiteTeal;
+    if (c == teal || c == ledCyan)
+        return whitePurple;
+    return whiteBlue;
+}
+
 void drawChassis (juce::Graphics& g, juce::Rectangle<float> r)
 {
+    if (white())
+    {
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff5f6f8), 0.0f, r.getY(), juce::Colour (0xffdcdfe5), 0.0f, r.getBottom(), false));
+        g.fillRect (r);
+        return;
+    }
     g.setGradientFill (juce::ColourGradient (chassisTop, 0.0f, r.getY(), chassisBottom, 0.0f, r.getBottom(), false));
     g.fillRect (r);
     hairlines (g, r, 0.02f);
@@ -98,6 +207,26 @@ void drawScrew (juce::Graphics& g, juce::Point<float> c, float rad, float angle)
 
 void drawMetalPanel (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour accent, const juce::String& title, bool ja)
 {
+    if (white())
+    {
+        // 白い板: 柔らかい影、上の縁だけ明るく。見出しは色の点と文字
+        constexpr float corner = 10.0f;
+        juce::Path body;
+        body.addRoundedRectangle (r, corner);
+        juce::DropShadow (juce::Colours::black.withAlpha (0.10f), 16, { 0, 5 }).drawForPath (g, body);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffcfcfd), 0.0f, r.getY(), juce::Colour (0xffeef0f3), 0.0f, r.getBottom(), false));
+        g.fillPath (body);
+        g.setColour (juce::Colour (0xffd3d8df));
+        g.strokePath (body, juce::PathStrokeType (1.0f));
+        g.setColour (juce::Colours::white);
+        g.drawLine (r.getX() + corner, r.getY() + 1.0f, r.getRight() - corner, r.getY() + 1.0f, 1.0f);
+        g.setColour (deck::accent (accent));
+        g.fillEllipse (r.getX() + 13.0f, r.getY() + 13.5f, 6.0f, 6.0f);
+        g.setFont (fontOf (ja ? 12.5f : 11.5f, true, 0.12f));
+        g.setColour (whiteInk.withAlpha (0.82f));
+        g.drawText (title, juce::Rectangle<float> (r.getX() + 25.0f, r.getY() + 7.0f, r.getWidth() - 40.0f, 19.0f), juce::Justification::centredLeft, false);
+        return;
+    }
     constexpr float corner = 9.0f;
     // 落ち影
     g.setColour (juce::Colours::black.withAlpha (0.5f));
@@ -210,6 +339,35 @@ void drawLed (juce::Graphics& g, juce::Point<float> c, float rad, juce::Colour c
 
 void drawPad (juce::Graphics& g, juce::Rectangle<float> r, bool lit, bool hover, bool down, juce::Colour led)
 {
+    if (white())
+    {
+        // 白いキー: 押していない時は少し浮かせる。点いている物は色の枠と下の線
+        constexpr float corner = 6.0f;
+        r = r.reduced (2.0f);
+        const auto body = down ? r.translated (0.0f, 1.0f) : r;
+        juce::Path p;
+        p.addRoundedRectangle (body, corner);
+        if (! down)
+            juce::DropShadow (juce::Colours::black.withAlpha (0.12f), 6, { 0, 2 }).drawForPath (g, p);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white, 0.0f, body.getY(),
+                                                 hover ? juce::Colour (0xfff1f3f6) : juce::Colour (0xffe8ebef), 0.0f, body.getBottom(), false));
+        g.fillPath (p);
+        const auto col = accent (led);
+        if (lit)
+        {
+            g.setColour (col.withAlpha (0.09f));
+            g.fillPath (p);
+            g.setColour (col);
+            g.strokePath (p, juce::PathStrokeType (1.4f));
+            g.fillRoundedRectangle (body.getX() + corner + 2.0f, body.getBottom() - 3.5f, body.getWidth() - corner * 2.0f - 4.0f, 2.0f, 1.0f);
+        }
+        else
+        {
+            g.setColour (hover ? juce::Colour (0xffbfc5ce) : juce::Colour (0xffd0d5dc));
+            g.strokePath (p, juce::PathStrokeType (1.0f));
+        }
+        return;
+    }
     constexpr float corner = 5.0f;
     r = r.reduced (2.0f);
     // クロームの枠 (パッドがはまっている穴)
@@ -271,13 +429,28 @@ void drawChromeText (juce::Graphics& g, const juce::String& text, juce::Rectangl
 //==============================================================================
 DeckLookAndFeel::DeckLookAndFeel()
 {
-    setColour (juce::ComboBox::textColourId, juce::Colour (0xffd8f0ff));
-    setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff1a1d22));
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, juce::Colour (0xff3a3428));
-    setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff0b1119));
-    setColour (juce::TextEditor::textColourId, deck::lcdBlue);
-    setColour (juce::TextEditor::highlightColourId, deck::lcdBlue.withAlpha (0.3f));
-    setColour (juce::CaretComponent::caretColourId, deck::lcdBlue);
+    refreshSkin();
+}
+
+void DeckLookAndFeel::refreshSkin()
+{
+    using namespace deck;
+    const auto word = pick (lcdBlue, whiteInk);
+    setColour (juce::ComboBox::textColourId, pick (juce::Colour (0xffd8f0ff), whiteInk));
+    setColour (juce::Label::textColourId, pick (textCol, whiteInk));
+    setColour (juce::PopupMenu::backgroundColourId, pick (juce::Colour (0xff1a1d22), juce::Colour (0xfffbfcfd)));
+    setColour (juce::PopupMenu::textColourId, pick (textCol, whiteInk));
+    setColour (juce::PopupMenu::headerTextColourId, pick (textCol, whiteMuted));
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, pick (juce::Colour (0xff3a3428), whiteTeal.withAlpha (0.16f)));
+    setColour (juce::PopupMenu::highlightedTextColourId, pick (juce::Colours::white, whiteInk));
+    setColour (juce::TextEditor::backgroundColourId, pick (juce::Colour (0xff0b1119), juce::Colours::white));
+    setColour (juce::TextEditor::textColourId, word);
+    setColour (juce::TextEditor::highlightColourId, pick (word.withAlpha (0.3f), whiteTeal.withAlpha (0.25f)));
+    setColour (juce::TextEditor::highlightedTextColourId, pick (juce::Colours::white, whiteInk));
+    setColour (juce::CaretComponent::caretColourId, word);
+    setColour (juce::TooltipWindow::backgroundColourId, pick (juce::Colour (0xf0222735), juce::Colour (0xf8fbfcfd)));
+    setColour (juce::TooltipWindow::outlineColourId, pick (juce::Colour (0xff3d4558), juce::Colour (0xffcfd4db)));
+    setColour (juce::TooltipWindow::textColourId, pick (textCol, whiteInk));
 }
 
 void DeckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool isOver, bool isDown)
@@ -290,6 +463,13 @@ void DeckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bo
     const bool lit = b.getToggleState();
     g.setFont (getTextButtonFont (b, b.getHeight()));
     auto r = b.getLocalBounds().toFloat().reduced (5.0f, 1.0f).translated (0.0f, isDown ? 1.0f : 0.0f);
+    if (deck::white())
+    {
+        const auto col = lit ? deck::whiteTeal.darker (0.25f) : deck::whiteInk;
+        g.setColour (b.isEnabled() ? col : col.withAlpha (0.35f));
+        g.drawFittedText (b.getButtonText(), r.toNearestInt(), juce::Justification::centred, 1);
+        return;
+    }
     const auto col = lit ? juce::Colour (0xffffe9c8) : juce::Colour (0xffcdd2db);
     g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.drawFittedText (b.getButtonText(), r.translated (0.0f, 1.0f).toNearestInt(), juce::Justification::centred, 1);
@@ -300,6 +480,20 @@ void DeckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bo
 void DeckLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool isDown, int, int, int, int, juce::ComboBox& box)
 {
     const auto b = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h).reduced (1.5f);
+    if (deck::white())
+    {
+        // 白い入力欄: 細い枠と、色の三角
+        g.setColour (juce::Colours::white);
+        g.fillRoundedRectangle (b, 5.0f);
+        g.setColour (isDown ? deck::whiteTeal : juce::Colour (0xffcbd1d9));
+        g.drawRoundedRectangle (b, 5.0f, 1.0f);
+        juce::Path arrow;
+        const float cx = (float) w - 13.0f, cy = (float) h * 0.5f;
+        arrow.addTriangle (cx - 4.0f, cy - 2.0f, cx + 4.0f, cy - 2.0f, cx, cy + 3.0f);
+        g.setColour (deck::accent (box.findColour (juce::ComboBox::outlineColourId)));
+        g.fillPath (arrow);
+        return;
+    }
     deck::drawLcd (g, b, 5.0f);
     if (isDown)
     {
@@ -323,6 +517,16 @@ void DeckLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
     if (dynamic_cast<juce::Slider*> (label.getParentComponent()) == nullptr)
     {
         PluginLookAndFeel::drawLabel (g, label);
+        return;
+    }
+    if (deck::white())
+    {
+        if (! label.isBeingEdited())
+        {
+            g.setFont (fontOf (11.5f));
+            g.setColour (deck::whiteMuted);
+            g.drawText (label.getText(), label.getLocalBounds().toFloat(), juce::Justification::centred, false);
+        }
         return;
     }
     const auto r = label.getLocalBounds().toFloat().reduced (8.0f, 1.0f);
@@ -351,11 +555,17 @@ void DeckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, 
     const float halfPi = juce::MathConstants<float>::halfPi;
     auto at = [&] (float a, float rr) { return juce::Point<float> (c.x + std::cos (a - halfPi) * rr, c.y + std::sin (a - halfPi) * rr); };
 
-    // LED の目盛り (点いている所まで光る)
-    constexpr int dots = 21;
     float from = 0.0f;
     if (s.getMinimum() < 0.0 && s.getMaximum() > 0.0)
         from = (float) s.valueToProportionOfLength (0.0);
+    if (deck::white())
+    {
+        drawWhiteKnob (g, c, r * 0.6f, startAngle + from * (endAngle - startAngle), angle, startAngle, endAngle, fill);
+        return;
+    }
+
+    // LED の目盛り (点いている所まで光る)
+    constexpr int dots = 21;
     for (int i = 0; i < dots; ++i)
     {
         const float t = (float) i / (float) (dots - 1);

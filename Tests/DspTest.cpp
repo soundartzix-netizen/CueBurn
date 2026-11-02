@@ -1973,6 +1973,39 @@ int main()
         check (q.getPhrase().templateIndex == E + 1 && q.getPhrase().events.size() == n * 2, "保存・復元で戻る");
     }
 
+    std::printf ("W1) 波形の表示用データ: 上下の違いと、短い音が拡大で読める。30秒でも量が増えすぎない\n");
+    {
+        ScratchProcessor p;
+        const int n = (int) (2.0 * fs);
+        juce::AudioBuffer<float> b (2, n);
+        b.clear();
+        b.setSample (0, n / 2, 0.8f);          // 真ん中に、上向きのクリック1つ
+        b.setSample (1, n / 4, -0.4f);         // 右だけ、下向きのクリック
+        p.setSample (std::move (b), fs, "clicks.wav", "");
+        const auto w = p.getWaveOverview();
+        check (w != nullptr && std::abs (w->peak - 0.8f) < 1.0e-5f, "一番大きい値を覚える");
+
+        auto around = [&] (double at, double width) { return w->column (at - width * 0.5, at + width * 0.5); };
+        const auto click = around (0.5, 1.0e-3);
+        check (std::abs (click.hi - 1.0f) < 1.0e-5f && click.lo == 0.0f, "上向きの音は、上だけに出る");
+        const auto down = around (0.25, 1.0e-3);
+        check (std::abs (down.lo + 0.5f) < 1.0e-5f && down.hi == 0.0f, "左右どちらのチャンネルの音も拾う");
+        const auto quiet = around (0.75, 1.0e-3);
+        check (quiet.lo == 0.0f && quiet.hi == 0.0f && quiet.rms == 0.0f, "無音の所は 0");
+        check (around (0.5, 0.2).hi == click.hi, "広い範囲でも、短い音を取りこぼさない");
+
+        ScratchProcessor q;
+        const int big = 30 * 192000;
+        juce::AudioBuffer<float> c (1, big);
+        c.clear();
+        q.setSample (std::move (c), 192000.0, "long.wav", "");
+        const auto wl = q.getWaveOverview();
+        check ((int) wl->lo.size() <= ScratchProcessor::maxOverviewBlocks && (long long) wl->lo.size() * wl->blockSize >= big,
+               "最大の長さでも塊は " + juce::String ((int) wl->lo.size()) + " 個で、全体を覆う");
+        const auto zero = wl->column (0.0, 1.0);
+        check (zero.lo == 0.0f && zero.hi == 0.0f && zero.rms == 0.0f, "全部無音でも、壊れない");
+    }
+
     std::printf ("\n%s (%d 件の失敗)\n", failures == 0 ? "ALL PASS" : "FAILED", failures);
     return failures == 0 ? 0 : 1;
 }

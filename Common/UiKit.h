@@ -18,6 +18,7 @@ inline const juce::Colour blue (0xff5aa9ff);
 inline const juce::Colour violet (0xffa596ff);
 
 juce::Font fontOf (float size, bool bold = false, float kerning = 0.0f);
+void setFontOverride (juce::Font (*fn) (float size, bool bold)); // 見た目を変える時に、全体の文字を差し替える (nullptr で元に戻す)
 juce::String u8 (const char* utf8);
 bool hasWide (const juce::String& text); // 日本語など非ASCII文字を含むか
 }
@@ -56,6 +57,11 @@ class HelpLabel : public juce::Component, public juce::SettableTooltipClient
 public:
     void setLabel (const juce::String& newText, juce::Justification j);
     void paint (juce::Graphics&) override;
+
+    // 見た目ごとの色 (全部のラベルで共通)。showIcon = false で ? の印を出さない
+    static inline juce::Colour idleColour = ui::mutedCol, hoverColour = ui::textCol, iconHover = ui::teal;
+    static inline bool showIcon = true;
+
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override { hover = false; repaint(); }
 

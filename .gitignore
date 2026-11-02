@@ -3,3 +3,4 @@ build/
 .vs/
 dist/
 _effect_version/
+snap/

@@ -56,6 +56,7 @@ private:
 };
 
 // 音源の表示 (サンプルの波形と頭出し位置。クリックで頭出し位置を選べる)
+// ホイールで拡大、右クリックで全体に戻す。拡大中は下の帯で見る位置を動かせる
 class SourceView : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -63,16 +64,36 @@ public:
 
     bool japanese = false;
 
+    void setView (double start, double length); // 見える範囲 (サンプル全体を 0〜1 として)
+    double getViewStart() const noexcept { return viewStart; }
+    double getViewLength() const noexcept { return viewLength; }
+
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics& g) override { deck::drawLcdGloss (g, getLocalBounds().toFloat()); }
-    void mouseDown (const juce::MouseEvent& e) override { setFrom (e); }
-    void mouseDrag (const juce::MouseEvent& e) override { setFrom (e); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
+    juce::Rectangle<float> plotArea() const { return getLocalBounds().toFloat().reduced (4.0f, 14.0f); }
+    juce::Rectangle<float> stripArea() const;
+    bool sampleShown() const;
+    bool zoomed() const noexcept { return viewLength < 0.9999; }
     void setFrom (const juce::MouseEvent&);
+    void panFrom (const juce::MouseEvent&);
+    void refreshPaths (juce::Rectangle<float> plot, juce::Rectangle<float> strip, float pixelScale);
 
     ScratchProcessor& proc;
     std::function<void (float)> onSetStart;
+    double viewStart = 0.0, viewLength = 1.0;
+    bool draggingStrip = false;
+
+    // 波形の形は、見える範囲が変わった時だけ作り直す
+    std::shared_ptr<const ScratchProcessor::WaveOverview> wave;
+    juce::Path peakPath, rmsPath, stripPath;
+    juce::Rectangle<float> pathPlot, pathStrip;
+    double pathStart = -1.0, pathLength = -1.0;
+    float pathScale = 0.0f;
 };
 
 // フィルのタイムライン (イベントのブロックを並べて表示。クリックで、そのブロックのパターンを切り替える)
@@ -256,7 +277,9 @@ public:
     void resized() override;
 
     FillTimeline& getTimeline() noexcept { return timeline; } // 表示の確認用
+    SourceView& getSourceView() noexcept { return sourceView; } // 表示の確認用
     void showPatternEditor (int pattern);                     // 波形エディタを開く (パターンの番号)
+    void applySkin();                                         // 今の見た目を画面に反映する
     void askSavePattern();                                    // マイパターン: 名前を聞いて保存
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -343,7 +366,8 @@ private:
     juce::TextButton randomButton, varyButton, backButton, previewButton;
     int shownPhraseVersion = -1;
 
-    juce::TextButton enButton, jaButton;
+    juce::TextButton enButton, jaButton, skinButton;
+    deck::Skin shownSkin = deck::Skin::deck;
     bool japanese = false;
     bool dragHover = false;
 

@@ -2,8 +2,18 @@
 
 namespace ui
 {
+static juce::Font (*fontOverride) (float, bool) = nullptr;
+
+void setFontOverride (juce::Font (*fn) (float, bool))
+{
+    fontOverride = fn;
+}
+
 juce::Font fontOf (float size, bool bold, float kerning)
 {
+    if (fontOverride != nullptr)
+        return fontOverride (size, bold).withExtraKerningFactor (kerning);
+
     auto o = juce::FontOptions (size);
     if (bold)
         o = o.withStyle ("Bold");
@@ -28,11 +38,11 @@ using namespace ui;
 
 namespace
 {
-juce::TextLayout tooltipLayout (const juce::String& text)
+juce::TextLayout tooltipLayout (const juce::String& text, juce::Colour ink)
 {
     juce::AttributedString a;
     a.setJustification (juce::Justification::centredLeft);
-    a.append (text, fontOf (12.5f), textCol);
+    a.append (text, fontOf (12.5f), ink);
     a.setWordWrap (hasWide (text) ? juce::AttributedString::byChar : juce::AttributedString::byWord);
     juce::TextLayout tl;
     tl.createLayout (a, 300.0f);
@@ -49,6 +59,9 @@ PluginLookAndFeel::PluginLookAndFeel()
     setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
     setColour (juce::ComboBox::textColourId, textCol);
     setColour (juce::Label::textColourId, textCol);
+    setColour (juce::TooltipWindow::backgroundColourId, juce::Colour (0xf0222735));
+    setColour (juce::TooltipWindow::outlineColourId, juce::Colour (0xff3d4558));
+    setColour (juce::TooltipWindow::textColourId, textCol);
 }
 
 juce::Font PluginLookAndFeel::getComboBoxFont (juce::ComboBox&) { return fontOf (12.5f); }
@@ -67,7 +80,7 @@ void PluginLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b
 
 juce::Rectangle<int> PluginLookAndFeel::getTooltipBounds (const juce::String& text, juce::Point<int> screenPos, juce::Rectangle<int> parentArea)
 {
-    auto tl = tooltipLayout (text);
+    auto tl = tooltipLayout (text, textCol);
     const int w = (int) std::ceil (tl.getWidth()) + 24;
     const int h = (int) std::ceil (tl.getHeight()) + 16;
     return juce::Rectangle<int> (screenPos.x > parentArea.getCentreX() ? screenPos.x - (w + 12) : screenPos.x + 20,
@@ -78,11 +91,11 @@ juce::Rectangle<int> PluginLookAndFeel::getTooltipBounds (const juce::String& te
 void PluginLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& text, int w, int h)
 {
     auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h).reduced (0.5f);
-    g.setColour (juce::Colour (0xf0222735));
+    g.setColour (findColour (juce::TooltipWindow::backgroundColourId));
     g.fillRoundedRectangle (r, 7.0f);
-    g.setColour (juce::Colour (0xff3d4558));
+    g.setColour (findColour (juce::TooltipWindow::outlineColourId));
     g.drawRoundedRectangle (r, 7.0f, 1.0f);
-    tooltipLayout (text).draw (g, r.reduced (12.0f, 8.0f));
+    tooltipLayout (text, findColour (juce::TooltipWindow::textColourId)).draw (g, r.reduced (12.0f, 8.0f));
 }
 
 void PluginLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
@@ -160,17 +173,19 @@ void HelpLabel::paint (juce::Graphics& g)
     const auto f = fontOf (hasWide (text) ? 11.5f : 10.5f, true, 0.08f);
     const float tw = juce::GlyphArrangement::getStringWidth (f, text);
     const float icon = 12.0f, gapW = 4.0f;
-    const float total = tw + gapW + icon;
+    const float total = showIcon ? tw + gapW + icon : tw;
     auto b = getLocalBounds().toFloat();
     const float x = just == juce::Justification::centredRight ? b.getRight() - total
                   : (just == juce::Justification::centredLeft ? b.getX() : b.getCentreX() - total * 0.5f);
 
     g.setFont (f);
-    g.setColour (hover ? textCol : mutedCol);
+    g.setColour (hover ? hoverColour : idleColour);
     g.drawText (text, juce::Rectangle<float> (x, b.getY(), tw + 2.0f, b.getHeight()), juce::Justification::centredLeft, false);
+    if (! showIcon)
+        return;
 
     const auto ic = juce::Rectangle<float> (x + tw + gapW, b.getCentreY() - icon * 0.5f, icon, icon);
-    g.setColour (hover ? teal : mutedCol.withAlpha (0.8f));
+    g.setColour (hover ? iconHover : idleColour.withAlpha (0.8f));
     g.drawEllipse (ic.reduced (0.5f), 1.0f);
     g.setFont (fontOf (9.0f, true));
     g.drawText ("?", ic.translated (0.0f, -0.5f), juce::Justification::centred, false);

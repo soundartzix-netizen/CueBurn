@@ -45,6 +45,8 @@ float pseudoNoise (int i)
 // パターンごとの色 (タイムライン)
 juce::Colour patternColour (int pattern)
 {
+    if (deck::white())
+        return pattern >= ScratchProcessor::numPresetPatterns ? deck::screenPurple : deck::screenTeal;
     static const juce::Colour c[ScratchProcessor::numPatterns] = {
         orange, teal, violet, juce::Colour (0xffff6b8b), blue, juce::Colour (0xffffd166),
         juce::Colour (0xff9be564), juce::Colour (0xffe07bff), juce::Colour (0xff7fe3ff), juce::Colour (0xffff4d4d),
@@ -159,6 +161,154 @@ void PlatterView::paint (juce::Graphics& g)
     const auto ring = dragging || active ? deck::ledAmber : deck::ledCyan;
     const float twoPi = juce::MathConstants<float>::twoPi;
     auto disc = [&] (float rr) { return juce::Rectangle<float> (c.x - rr, c.y - rr, rr * 2.0f, rr * 2.0f); };
+
+    if (deck::white())
+    {
+        // CDJ のジョグ: 金属の縁 → LED の溝 → 一段高いガラスの盤 → 奥まった中央の液晶
+        const bool live = dragging || active;
+        const float halfPi = juce::MathConstants<float>::halfPi;
+        auto pt = [&] (float a, float rr) { return juce::Point<float> (c.x + std::cos (a) * rr, c.y + std::sin (a) * rr); };
+
+        // 金属の縁 (左上から光)
+        juce::Path rim;
+        rim.addEllipse (disc (R));
+        juce::DropShadow (juce::Colours::black.withAlpha (0.28f), 22, { 0, 10 }).drawForPath (g, rim);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffcfdfe), c.x - R * 0.7f, c.y - R * 0.7f,
+                                                 juce::Colour (0xff98a0ab), c.x + R * 0.7f, c.y + R * 0.8f, false));
+        g.fillPath (rim);
+        g.setColour (juce::Colours::white.withAlpha (0.8f));
+        g.drawEllipse (disc (R - 0.8f), 1.0f);
+
+        // LED の溝 (へこんでいる: 上の縁が暗く、下の縁が明るい)
+        const float chR = R * 0.935f;
+        g.setColour (juce::Colour (0xff101215));
+        g.fillEllipse (disc (chR));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4a515b), c.x, c.y - chR, juce::Colours::white.withAlpha (0.9f), c.x, c.y + chR, false));
+        g.drawEllipse (disc (chR), 1.2f);
+
+        // LED: 光の尾が盤の回転について回る。止まっている時は、ゆっくり回って待機を知らせる
+        const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+        const float head = live ? ang - halfPi : (float) std::fmod (now * 0.8, (double) twoPi) - halfPi;
+        const float level = live ? 1.0f : 0.55f;
+        constexpr int leds = 72;
+        const float ledR = R * 0.902f, dot = juce::jmax (1.3f, R * 0.016f);
+        for (int i = 0; i < leds; ++i)
+        {
+            const float a = (float) i * twoPi / (float) leds - halfPi;
+            float behind = std::fmod (head - a + twoPi * 4.0f, twoPi); // 光の先頭から、後ろへ何ラジアンか
+            float lv = behind < 1.7f ? 1.0f - behind / 1.7f : 0.0f;
+            if (behind > twoPi - 0.08f)
+                lv = 1.0f; // 先頭のすぐ前
+            lv = lv * lv * level;
+            const auto p = pt (a, ledR);
+            g.setColour (deck::ringBlue.withAlpha (0.10f));
+            g.fillEllipse (p.x - dot, p.y - dot, dot * 2.0f, dot * 2.0f);
+            if (lv > 0.01f)
+            {
+                g.setColour (deck::ringBlue.withAlpha (0.22f * lv));
+                g.fillEllipse (p.x - dot * 2.8f, p.y - dot * 2.8f, dot * 5.6f, dot * 5.6f);
+                g.setColour (deck::ringBlue.withAlpha (lv).interpolatedWith (juce::Colours::white, 0.35f * lv));
+                g.fillEllipse (p.x - dot, p.y - dot, dot * 2.0f, dot * 2.0f);
+            }
+        }
+
+        // 盤: 側面 (厚み) を下にずらして見せ、その上にガラスの天面
+        const float topR = R * 0.855f;
+        juce::Path top;
+        top.addEllipse (disc (topR));
+        juce::DropShadow (juce::Colours::black.withAlpha (0.7f), 10, { 0, 4 }).drawForPath (g, top);
+        g.setColour (juce::Colour (0xff050506));
+        g.fillEllipse (disc (topR).translated (0.0f, 6.0f));
+        g.setColour (juce::Colour (0xff4a505a));
+        g.drawEllipse (disc (topR).translated (0.0f, 6.0f), 1.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2b2f37), c.x - topR * 0.3f, c.y - topR * 0.45f,
+                                                 juce::Colour (0xff07080a), c.x + topR, c.y + topR * 0.2f, true));
+        g.fillPath (top);
+        {
+            juce::Graphics::ScopedSaveState ss (g);
+            g.reduceClipRegion (top);
+            // ガラスの下の溝 (薄く) と、回転が分かる刻み
+            for (float rr = topR * 0.45f; rr < topR * 0.97f; rr += 2.4f)
+            {
+                g.setColour (juce::Colours::white.withAlpha (std::fmod (rr, 4.8f) < 2.4f ? 0.03f : 0.012f));
+                g.drawEllipse (disc (rr), 0.7f);
+            }
+            for (int i = 0; i < 48; ++i)
+            {
+                const float a = ang + (float) i * twoPi / 48.0f;
+                g.setColour (juce::Colours::white.withAlpha (i % 12 == 0 ? 0.28f : 0.07f));
+                g.drawLine ({ pt (a, topR * 0.9f), pt (a, topR * 0.965f) }, i % 12 == 0 ? 1.6f : 1.0f);
+            }
+            // ガラスの映り込み: 左上の大きな柔らかい光と、縁の細い光
+            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.16f), c.x - topR * 0.35f, c.y - topR * 0.6f,
+                                                     juce::Colours::transparentWhite, c.x - topR * 0.35f + topR * 0.9f, c.y - topR * 0.6f, true));
+            g.fillEllipse (disc (topR));
+            // 三日月形の映り込み (盤の円から、右下にずらした円を抜く)
+            juce::Path crescent;
+            crescent.addEllipse (disc (topR));
+            crescent.addEllipse (disc (topR * 0.97f).translated (topR * 0.07f, topR * 0.10f));
+            crescent.setUsingNonZeroWinding (false);
+            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.22f), c.x - topR * 0.6f, c.y - topR * 0.7f,
+                                                     juce::Colours::transparentWhite, c.x + topR * 0.2f, c.y - topR * 0.1f, false));
+            g.fillPath (crescent);
+        }
+        juce::Path edgeLit, edgeDim;
+        edgeLit.addCentredArc (c.x, c.y, topR - 0.8f, topR - 0.8f, 0.0f, -1.9f, 0.2f, true);
+        edgeDim.addCentredArc (c.x, c.y, topR - 0.8f, topR - 0.8f, 0.0f, 1.6f, 3.6f, true);
+        g.setColour (juce::Colours::white.withAlpha (0.55f));
+        g.strokePath (edgeLit, juce::PathStrokeType (1.2f));
+        g.setColour (juce::Colours::white.withAlpha (0.15f));
+        g.strokePath (edgeDim, juce::PathStrokeType (1.0f));
+
+        // 中央の液晶: 金属の縁 → 深い井戸 → 画面。外側を回る目盛りで位置を示す
+        const float wellR = R * 0.39f, lcdR = R * 0.335f;
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe9edf2), c.x - wellR, c.y - wellR, juce::Colour (0xff5d646e), c.x + wellR, c.y + wellR, false));
+        g.fillEllipse (disc (wellR));
+        g.setColour (juce::Colour (0xff020304));
+        g.fillEllipse (disc (wellR - 2.0f));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff0d1b2e), c.x, c.y - lcdR, juce::Colour (0xff04080d), c.x, c.y + lcdR, false));
+        g.fillEllipse (disc (lcdR).translated (0.0f, 1.5f));
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.75f), c.x, c.y - lcdR, juce::Colours::transparentBlack, c.x, c.y - lcdR * 0.55f, false));
+        g.fillEllipse (disc (lcdR).translated (0.0f, 1.5f)); // 縁の影で、奥まって見せる
+
+        constexpr int segs = 40;
+        float pa = std::fmod (ang, twoPi);
+        if (pa < 0.0f)
+            pa += twoPi;
+        const int cur = (int) (pa / twoPi * (float) segs) % segs;
+        for (int i = 0; i < segs; ++i)
+        {
+            const float a = (float) i * twoPi / (float) segs - halfPi;
+            const int dist = (cur - i + segs) % segs; // 後ろへ尾を引く
+            const float lv = dist == 0 ? 1.0f : (dist < 6 ? 0.55f - 0.08f * (float) dist : 0.1f);
+            g.setColour (deck::ringBlue.withAlpha (lv));
+            g.drawLine ({ pt (a, lcdR * 0.80f).translated (0.0f, 1.5f), pt (a, lcdR * 0.93f).translated (0.0f, 1.5f) }, dist == 0 ? 3.0f : 2.0f);
+        }
+        g.setColour (juce::Colour (0xffe8f3ff));
+        g.setFont (fontOf (lcdR * 0.52f, true));
+        g.drawText (note >= 0 ? noteName (note) : juce::String ("--"), disc (lcdR * 0.7f).translated (0.0f, -lcdR * 0.08f), juce::Justification::centred);
+        g.setColour (deck::ringBlue.withAlpha (live ? 1.0f : 0.6f));
+        g.setFont (fontOf (lcdR * 0.22f, true, 0.12f));
+        g.drawText (dragging ? "SCRATCH" : (active ? "PLAY" : "CUE"), disc (lcdR * 0.7f).translated (0.0f, lcdR * 0.34f), juce::Justification::centred);
+        {
+            juce::Graphics::ScopedSaveState ss (g);
+            g.reduceClipRegion (juce::Rectangle<float> (c.x - wellR, c.y - wellR, wellR * 2.0f, wellR * 0.95f).toNearestInt());
+            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.10f), c.x, c.y - lcdR, juce::Colours::transparentWhite, c.x, c.y, false));
+            g.fillEllipse (disc (lcdR));
+        }
+
+        g.setFont (fontOf (japanese ? 11.5f : 10.5f, true, 0.08f));
+        g.setColour (dragging || note >= 0 ? deck::whiteBlue : deck::whiteMuted);
+        juce::String text;
+        if (dragging)
+            text = u8 ("◀  ▶");
+        else if (note >= 0)
+            text = u8 ("♪ ") + noteName (note);
+        else
+            text = u8 (japanese ? "ノートを置くか、レコードをドラッグ" : "PLAY NOTES OR DRAG THE RECORD");
+        g.drawText (text, getLocalBounds().toFloat().removeFromBottom (20.0f), juce::Justification::centred);
+        return;
+    }
 
     // 落ち影
     g.setColour (juce::Colours::black.withAlpha (0.55f));
@@ -306,18 +456,150 @@ void Tile::paint (juce::Graphics& g)
         drawIcon (g, r.reduced (10.0f, 6.0f), idx, sel);
 
     g.setFont (fontOf (hasWide (label) ? 11.0f : 10.0f, true, 0.1f));
-    g.setColour (sel ? juce::Colour (0xffffe2b8) : juce::Colour (0xffaeb4bf));
+    g.setColour (sel ? deck::pick (juce::Colour (0xffffe2b8), deck::whiteTeal.darker (0.25f))
+                     : deck::pick (juce::Colour (0xffaeb4bf), deck::whiteInk.withAlpha (0.8f)));
     g.drawText (label, labelArea.translated (0.0f, -2.0f), juce::Justification::centred);
 }
 
 //==============================================================================
+bool SourceView::sampleShown() const
+{
+    return (int) proc.apvts.getRawParameterValue ("src")->load() == ScratchProcessor::srcSample && proc.getSampleSeconds() > 0.0;
+}
+
+juce::Rectangle<float> SourceView::stripArea() const
+{
+    return getLocalBounds().toFloat().reduced (4.0f, 2.0f).removeFromBottom (10.0f);
+}
+
+void SourceView::setView (double start, double length)
+{
+    const double seconds = proc.getSampleSeconds();
+    const double shortest = seconds > 0.0 ? juce::jmin (1.0, 0.1 / seconds) : 1.0; // 一番拡大して 0.1 秒
+    viewLength = juce::jlimit (shortest, 1.0, length);
+    viewStart = juce::jlimit (0.0, 1.0 - viewLength, start);
+    repaint();
+}
+
 void SourceView::setFrom (const juce::MouseEvent& e)
 {
-    if ((int) proc.apvts.getRawParameterValue ("src")->load() != ScratchProcessor::srcSample || proc.getSampleSeconds() <= 0.0)
+    if (! sampleShown())
         return;
     const auto plot = getLocalBounds().toFloat().reduced (4.0f, 0.0f);
+    const double x = juce::jlimit (0.0, 1.0, (double) (e.position.x - plot.getX()) / plot.getWidth());
     if (onSetStart)
-        onSetStart (juce::jlimit (0.0f, 1.0f, (e.position.x - plot.getX()) / plot.getWidth()));
+        onSetStart ((float) (viewStart + x * viewLength));
+}
+
+void SourceView::panFrom (const juce::MouseEvent& e)
+{
+    const auto strip = stripArea();
+    setView ((double) (e.position.x - strip.getX()) / strip.getWidth() - viewLength * 0.5, viewLength);
+}
+
+void SourceView::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        setView (0.0, 1.0);
+        return;
+    }
+    draggingStrip = sampleShown() && zoomed() && stripArea().expanded (0.0f, 2.0f).contains (e.position);
+    if (draggingStrip)
+        panFrom (e);
+    else
+        setFrom (e);
+}
+
+void SourceView::mouseDrag (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+        return;
+    if (draggingStrip)
+        panFrom (e);
+    else
+        setFrom (e);
+}
+
+void SourceView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    if (! sampleShown())
+        return;
+    const auto plot = plotArea();
+    const double x = juce::jlimit (0.0, 1.0, (double) (e.position.x - plot.getX()) / plot.getWidth());
+    const double at = viewStart + x * viewLength;                // マウスの下の位置は動かさない
+    const double delta = (double) (wheel.isReversed ? -wheel.deltaY : wheel.deltaY);
+    const double length = juce::jlimit (1.0e-4, 1.0, viewLength * std::exp (-delta * 1.5));
+    const double shortest = juce::jmin (1.0, 0.1 / proc.getSampleSeconds());
+    const double next = juce::jmax (length, shortest);
+    setView (at - x * next, next);
+}
+
+void SourceView::refreshPaths (juce::Rectangle<float> plot, juce::Rectangle<float> strip, float pixelScale)
+{
+    auto latest = proc.getWaveOverview();
+    if (latest != wave)
+    {
+        if (wave != nullptr) // 別のサンプルに変わったら、全体表示に戻す
+        {
+            viewStart = 0.0;
+            viewLength = 1.0;
+        }
+        wave = std::move (latest);
+        pathStart = -1.0;
+    }
+    if (wave == nullptr || (pathStart == viewStart && pathLength == viewLength && pathPlot == plot && pathStrip == strip && pathScale == pixelScale))
+        return;
+
+    // 上下に別々の線を引いて、間を塗る (実際の波形の上下の違いも見える)
+    auto build = [this] (juce::Path& peak, juce::Path* rms, juce::Rectangle<float> area, double start, double length, int columns)
+    {
+        std::vector<float> top ((size_t) columns), bottom ((size_t) columns), rmsSize ((size_t) columns);
+        const float centre = area.getCentreY(), half = area.getHeight() * 0.5f;
+        const float minHalf = 0.5f;
+        float prevLo = 0.0f, prevHi = 0.0f;
+        for (int i = 0; i < columns; ++i)
+        {
+            const double a = start + length * (double) i / (double) columns;
+            const double b = start + length * (double) (i + 1) / (double) columns;
+            auto c = wave->column (a, b);
+            if (i > 0) // 拡大した時に、線が途切れないように隣とつなぐ
+            {
+                c.lo = juce::jmin (c.lo, prevHi);
+                c.hi = juce::jmax (c.hi, prevLo);
+            }
+            prevLo = c.lo;
+            prevHi = c.hi;
+            top[(size_t) i] = centre - juce::jmax (minHalf, c.hi * half);
+            bottom[(size_t) i] = centre + juce::jmax (minHalf, -c.lo * half);
+            rmsSize[(size_t) i] = juce::jmax (minHalf, juce::jmin (c.rms, juce::jmax (c.hi, -c.lo)) * half);
+        }
+
+        const auto xAt = [&] (int i) { return area.getX() + area.getWidth() * (float) i / (float) (columns - 1); };
+        auto outline = [&] (juce::Path& p, auto upper, auto lower)
+        {
+            p.clear();
+            p.preallocateSpace (columns * 6 + 8);
+            p.startNewSubPath (xAt (0), upper (0));
+            for (int i = 1; i < columns; ++i)
+                p.lineTo (xAt (i), upper (i));
+            for (int i = columns - 1; i >= 0; --i)
+                p.lineTo (xAt (i), lower (i));
+            p.closeSubPath();
+        };
+        outline (peak, [&] (int i) { return top[(size_t) i]; }, [&] (int i) { return bottom[(size_t) i]; });
+        if (rms != nullptr)
+            outline (*rms, [&] (int i) { return centre - rmsSize[(size_t) i]; }, [&] (int i) { return centre + rmsSize[(size_t) i]; });
+    };
+
+    build (peakPath, &rmsPath, plot, viewStart, viewLength, juce::jmax (2, juce::roundToInt (plot.getWidth() * pixelScale)));
+    build (stripPath, nullptr, strip, 0.0, 1.0, juce::jmax (2, juce::roundToInt (strip.getWidth() * pixelScale)));
+
+    pathStart = viewStart;
+    pathLength = viewLength;
+    pathPlot = plot;
+    pathStrip = strip;
+    pathScale = pixelScale;
 }
 
 void SourceView::paint (juce::Graphics& g)
@@ -328,7 +610,9 @@ void SourceView::paint (juce::Graphics& g)
     const int src = (int) proc.apvts.getRawParameterValue ("src")->load();
     const bool active = proc.uiActive.load();
     const double pos = proc.uiPos.load();
-    auto plot = r.reduced (4.0f, 14.0f);
+    auto plot = plotArea();
+    const auto waveInk = deck::lcdBlue;
+    const auto playInk = deck::pick (orange, deck::screenPurple);
 
     g.setFont (fontOf (japanese ? 11.0f : 10.0f, true, 0.08f));
 
@@ -342,45 +626,85 @@ void SourceView::paint (juce::Graphics& g)
             return;
         }
 
+        const auto strip = stripArea();
+        refreshPaths (plot, strip, juce::jmax (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor()));
+
+        const auto xOf = [&] (double fraction) { return plot.getX() + plot.getWidth() * (float) ((fraction - viewStart) / viewLength); };
         const float start = proc.apvts.getRawParameterValue ("start")->load();
         const double depthSec = 0.001 * proc.apvts.getRawParameterValue ("depth")->load();
-        const float x0 = plot.getX() + plot.getWidth() * start;
-        const float x1 = juce::jmin (plot.getRight(), x0 + plot.getWidth() * (float) (depthSec / len));
+        const float x0 = xOf ((double) start);
+        const float x1 = xOf ((double) start + depthSec / len);
+        const auto range = juce::Rectangle<float>::leftTopRightBottom (juce::jmax (plot.getX(), x0), plot.getY(),
+                                                                       juce::jmin (plot.getRight(), juce::jmax (x1, x0 + 2.0f)), plot.getBottom());
 
-        g.setColour (orange.withAlpha (0.12f));
-        g.fillRect (juce::Rectangle<float> (x0, plot.getY(), juce::jmax (2.0f, x1 - x0), plot.getHeight()));
+        g.setColour (waveInk.withAlpha (0.12f));
+        g.fillRect (plot.getX(), plot.getCentreY() - 0.5f, plot.getWidth(), 1.0f);
+        g.setColour (waveInk.withAlpha (0.38f));
+        g.fillPath (peakPath);
+        g.setColour (waveInk.withAlpha (0.82f));
+        g.fillPath (rmsPath);
 
-        const int bins = ScratchProcessor::numWaveBins;
-        const float bw = plot.getWidth() / (float) bins;
-        for (int i = 0; i < bins; ++i)
+        if (! range.isEmpty())
         {
-            const float v = juce::jlimit (0.0f, 1.0f, proc.uiWave[(size_t) i].load());
-            const float h = juce::jmax (1.0f, v * plot.getHeight());
-            const float x = plot.getX() + (float) i * bw;
-            const bool inRange = x + bw * 0.5f >= x0 && x + bw * 0.5f <= x1;
-            g.setColour (inRange ? orange : deck::lcdBlue.withAlpha (0.5f));
-            g.fillRect (x + 0.3f, plot.getCentreY() - h * 0.5f, juce::jmax (0.8f, bw - 0.6f), h);
+            g.setColour (playInk.withAlpha (0.12f));
+            g.fillRect (range);
+
+            juce::Graphics::ScopedSaveState clip (g);
+            g.reduceClipRegion (range.getSmallestIntegerContainer());
+            g.setColour (playInk.withAlpha (0.5f));
+            g.fillPath (peakPath);
+            g.setColour (playInk);
+            g.fillPath (rmsPath);
         }
 
-        // 頭出し位置
-        g.setColour (juce::Colours::white);
-        g.fillRect (x0 - 1.0f, r.getY() + 3.0f, 2.0f, r.getHeight() - 6.0f);
-        juce::Path tri;
-        tri.addTriangle (x0 - 5.0f, r.getY() + 3.0f, x0 + 5.0f, r.getY() + 3.0f, x0, r.getY() + 10.0f);
-        g.fillPath (tri);
+        // 頭出し位置 (拡大して外に出ている時は描かない)
+        if (x0 >= plot.getX() - 1.0f && x0 <= plot.getRight() + 1.0f)
+        {
+            g.setColour (juce::Colours::white);
+            g.fillRect (x0 - 1.0f, r.getY() + 3.0f, 2.0f, r.getHeight() - 6.0f);
+            juce::Path tri;
+            tri.addTriangle (x0 - 5.0f, r.getY() + 3.0f, x0 + 5.0f, r.getY() + 3.0f, x0, r.getY() + 10.0f);
+            g.fillPath (tri);
+        }
 
         if (active)
         {
-            const float xp = plot.getX() + plot.getWidth() * (float) juce::jlimit (0.0, 1.0, pos / len);
-            g.setColour (orange);
-            g.fillRect (xp - 1.0f, plot.getY() - 4.0f, 2.0f, plot.getHeight() + 8.0f);
+            const float xp = xOf (juce::jlimit (0.0, 1.0, pos / len));
+            if (xp >= plot.getX() && xp <= plot.getRight())
+            {
+                g.setColour (playInk);
+                g.fillRect (xp - 1.0f, plot.getY() - 4.0f, 2.0f, plot.getHeight() + 8.0f);
+            }
         }
 
         g.setColour (textCol);
         g.drawText (proc.getSampleName(), r.reduced (10.0f, 1.0f).removeFromTop (13.0f), juce::Justification::centredLeft);
         g.setColour (mutedCol);
-        g.drawText (juce::String (len, 2) + " s", r.reduced (10.0f, 1.0f).removeFromTop (13.0f), juce::Justification::centredRight);
-        g.drawText (u8 (japanese ? "クリックで頭出し" : "CLICK TO SET CUE"), r.reduced (10.0f, 1.0f).removeFromBottom (13.0f), juce::Justification::centredRight);
+        const auto zoomText = zoomed() ? juce::String ((1.0 / viewLength), viewLength > 0.1 ? 1 : 0) + "x   " : juce::String();
+        g.drawText (zoomText + juce::String (len * viewLength, 2) + " s", r.reduced (10.0f, 1.0f).removeFromTop (13.0f), juce::Justification::centredRight);
+
+        if (zoomed())
+        {
+            // 全体の中で、どこを見ているか
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.fillRect (strip);
+            g.setColour (waveInk.withAlpha (0.45f));
+            g.fillPath (stripPath);
+
+            const auto seen = juce::Rectangle<float> (strip.getX() + strip.getWidth() * (float) viewStart, strip.getY(),
+                                                      juce::jmax (3.0f, strip.getWidth() * (float) viewLength), strip.getHeight());
+            g.setColour (juce::Colours::white.withAlpha (0.14f));
+            g.fillRect (seen);
+            g.setColour (juce::Colours::white.withAlpha (0.65f));
+            g.drawRect (seen, 1.0f);
+            g.setColour (playInk);
+            g.fillRect (strip.getX() + strip.getWidth() * start - 0.5f, strip.getY(), 1.0f, strip.getHeight());
+        }
+        else
+        {
+            g.drawText (u8 (japanese ? "クリックで頭出し ・ ホイールで拡大" : "CLICK TO SET CUE  /  WHEEL TO ZOOM"),
+                        r.reduced (10.0f, 1.0f).removeFromBottom (13.0f), juce::Justification::centredRight);
+        }
         return;
     }
 
@@ -398,9 +722,9 @@ void SourceView::paint (juce::Graphics& g)
         else
             p.lineTo (x, y);
     }
-    g.setColour (deck::lcdBlue.withAlpha (0.25f));
+    g.setColour (waveInk.withAlpha (0.25f));
     g.strokePath (p, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour (deck::lcdBlue);
+    g.setColour (waveInk);
     g.strokePath (p, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     if (active)
@@ -408,7 +732,7 @@ void SourceView::paint (juce::Graphics& g)
         const double cyc = pos * ScratchProcessor::baseFreq;
         const double frac = (cyc / 4.0) - std::floor (cyc / 4.0);
         const float xp = plot.getX() + plot.getWidth() * (float) frac;
-        g.setColour (orange);
+        g.setColour (playInk);
         g.fillRect (xp - 1.0f, plot.getY() - 4.0f, 2.0f, plot.getHeight() + 8.0f);
     }
 
@@ -1075,9 +1399,10 @@ void FillTimeline::paint (juce::Graphics& g)
     {
         const auto sel = juce::Rectangle<float> (lane.getX() + (float) selLo * cw + 1.0f, lane.getY() + 2.0f,
                                                  (float) (selHi - selLo + 1) * cw - 2.0f, lane.getHeight() - 4.0f);
-        g.setColour (orange.withAlpha (0.16f));
+        const auto hot = deck::pick (orange, deck::screenTeal);
+        g.setColour (hot.withAlpha (0.16f));
         g.fillRoundedRectangle (sel, 4.0f);
-        g.setColour (orange);
+        g.setColour (hot);
         g.drawRoundedRectangle (sel, 4.0f, 1.5f);
         g.setFont (fontOf (14.0f, true));
         g.drawText ("+", sel, juce::Justification::centred);
@@ -1085,9 +1410,10 @@ void FillTimeline::paint (juce::Graphics& g)
     else if (hoverCell >= 0)
     {
         const auto cell = juce::Rectangle<float> (lane.getX() + (float) hoverCell * cw + 1.0f, lane.getY() + 2.0f, cw - 2.0f, lane.getHeight() - 4.0f);
-        g.setColour (orange.withAlpha (0.08f));
+        const auto hot = deck::pick (orange, deck::screenTeal);
+        g.setColour (hot.withAlpha (0.08f));
         g.fillRoundedRectangle (cell, 3.0f);
-        g.setColour (orange.withAlpha (0.55f));
+        g.setColour (hot.withAlpha (0.55f));
         g.drawRoundedRectangle (cell, 3.0f, 1.0f);
         g.setFont (fontOf (13.0f, true));
         g.drawText ("+", cell, juce::Justification::centred);
@@ -1129,8 +1455,19 @@ void FillTimeline::paint (juce::Graphics& g)
             g.drawRoundedRectangle (slot, 4.0f, 1.0f);
         }
 
-        g.setColour (col.withAlpha (hov ? 0.30f : 0.18f));
-        g.fillRoundedRectangle (box, 4.0f);
+        if (deck::white())
+        {
+            g.setGradientFill (juce::ColourGradient (col.withAlpha (hov ? 0.38f : 0.26f), 0.0f, box.getY(),
+                                                     col.withAlpha (0.04f), 0.0f, box.getBottom(), false));
+            g.fillRoundedRectangle (box, 4.0f);
+            g.setColour (juce::Colours::white.withAlpha (hov ? 0.35f : 0.2f));
+            g.fillRoundedRectangle (box.getX() + 3.0f, box.getY() + 1.0f, box.getWidth() - 6.0f, 1.0f, 0.5f);
+        }
+        else
+        {
+            g.setColour (col.withAlpha (hov ? 0.30f : 0.18f));
+            g.fillRoundedRectangle (box, 4.0f);
+        }
 
         // ミュートした所: 暗くして、斜線
         if (e.mute.any())
@@ -1171,6 +1508,8 @@ void FillTimeline::paint (juce::Graphics& g)
         const float apexE = warped ? proc.patternApex (e.pattern) : 0.5f;
         const float natE = e.tail < 1.0f ? proc.naturalEnd (e) : 1.0f; // 鳴らす終わりを伸ばした時は、元の終わりから明るく
         juce::Point<float> prev;
+        juce::Path glow; // White: 鳴る線の光
+        bool wasOpen = false;
         for (int k = 0; k <= n; ++k)
         {
             const double c = cycles * (double) k / (double) n;
@@ -1187,8 +1526,20 @@ void FillTimeline::paint (juce::Graphics& g)
                 const bool open = (held || proc.shapeGate (e.pattern, phi)) && ! e.mute[(size_t) tick] && phiMid < e.tail;
                 g.setColour (open ? col : mutedCol.withAlpha (0.3f));
                 g.drawLine (prev.x, prev.y, pt.x, pt.y, open ? 1.6f : 1.0f);
+                if (open)
+                {
+                    if (! wasOpen)
+                        glow.startNewSubPath (prev);
+                    glow.lineTo (pt);
+                }
+                wasOpen = open;
             }
             prev = pt;
+        }
+        if (deck::white())
+        {
+            g.setColour (col.withAlpha (0.22f));
+            g.strokePath (glow, juce::PathStrokeType (4.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
         // ブロックの上のつまみ (1周目): 始点・頂点の印、◇ = 曲がり具合、▼ = 鳴らす終わり
@@ -1229,7 +1580,7 @@ void FillTimeline::paint (juce::Graphics& g)
                     const bool hot = hoverHandle == 3 || (drag == Drag::tail && i == dragEvent);
                     juce::Path tri;
                     tri.addTriangle (tp.x - 5.0f, tp.y - 9.0f, tp.x + 5.0f, tp.y - 9.0f, tp.x, tp.y - 1.0f);
-                    g.setColour (hot ? juce::Colours::white : deck::ledAmber);
+                    g.setColour (hot ? juce::Colours::white : deck::pick (deck::ledAmber, deck::screenTeal));
                     g.fillPath (tri);
                     g.fillRect (tp.x - 0.75f, tp.y - 1.0f, 1.5f, 6.0f);
                 }
@@ -1318,7 +1669,7 @@ void FillTimeline::paint (juce::Graphics& g)
         auto tag = juce::Rectangle<float> (tagW, 16.0f).withCentre ({ juce::jlimit (lane.getX() + tagW * 0.5f, lane.getRight() - tagW * 0.5f, cx), r.getY() + 12.0f });
         g.setColour (juce::Colour (0xee222735));
         g.fillRoundedRectangle (tag, 5.0f);
-        g.setColour (orange);
+        g.setColour (deck::pick (orange, deck::screenTeal));
         g.drawRoundedRectangle (tag, 5.0f, 1.0f);
         g.setColour (textCol);
         g.drawText (txt, tag, juce::Justification::centred);
@@ -1736,7 +2087,7 @@ void PatternEditorView::paint (juce::Graphics& g)
             prev = p;
         }
         g.setFont (fontOf (japanese ? 10.0f : 9.0f, true, 0.06f));
-        g.setColour (edited ? deck::ledAmber : mutedCol);
+        g.setColour (edited ? deck::pick (deck::ledAmber, deck::screenTeal) : mutedCol);
         g.drawText (u8 (pattern >= ScratchProcessor::numPresetPatterns ? (japanese ? "ユーザー波形" : "USER WAVE")
                         : edited ? (japanese ? "編集済み" : "EDITED") : (japanese ? "初期の形" : "ORIGINAL")),
                     t.reduced (8.0f, 4.0f).removeFromBottom (14.0f), juce::Justification::centred);
@@ -1774,12 +2125,12 @@ void PatternEditorView::paint (juce::Graphics& g)
         const bool hot = k == hoverEdge || (drag == Drag::gateEdge && k == dragEdge);
         for (float yy = c.getY(); yy < c.getBottom(); yy += 6.0f)
         {
-            g.setColour (deck::ledAmber.withAlpha (hot ? 0.8f : 0.4f));
+            g.setColour (deck::pick (deck::ledAmber, deck::screenTeal).withAlpha (hot ? 0.8f : 0.4f));
             g.fillRect (x - 0.5f, yy, 1.0f, 3.0f);
         }
         juce::Path tri;
         tri.addTriangle (x - 5.0f, c.getY() - 2.0f, x + 5.0f, c.getY() - 2.0f, x, c.getY() + 6.0f);
-        g.setColour (hot ? juce::Colours::white : deck::ledAmber);
+        g.setColour (hot ? juce::Colours::white : deck::pick (deck::ledAmber, deck::screenTeal));
         g.fillPath (tri);
     }
 
@@ -1906,6 +2257,7 @@ ScratchEditor::Combo& ScratchEditor::addCombo (const juce::String& id, juce::Col
 ScratchEditor::ScratchEditor (ScratchProcessor& p)
     : AudioProcessorEditor (&p), proc (p), platter (p), sourceView (p, [this] (float v) { setFloat ("start", v); }), timeline (p), patternEditor (p)
 {
+    deck::loadSkin();
     setLookAndFeel (&laf);
 
     rateCombo = &addCombo ("rate", orange);
@@ -1916,7 +2268,7 @@ ScratchEditor::ScratchEditor (ScratchProcessor& p)
     // 音源のタイル
     auto sourceIcon = [this] (juce::Graphics& g, juce::Rectangle<float> a, int idx, bool sel)
     {
-        const auto col = sel ? orange : teal;
+        const auto col = deck::accent (sel ? orange : teal);
         if (idx == ScratchProcessor::srcSample)
         {
             const bool loaded = proc.getSampleSeconds() > 0.0;
@@ -1957,7 +2309,7 @@ ScratchEditor::ScratchEditor (ScratchProcessor& p)
     // パターンのタイル (動きのカーブ。聞こえる部分は明るく、ミュートされる部分は暗く)
     auto tileIcon = [this] (juce::Graphics& g, juce::Rectangle<float> a, int idx, bool sel)
     {
-        const auto col = sel ? orange : teal;
+        const auto col = deck::accent (sel ? orange : teal);
         const int steps = 72;
         juce::Point<float> prev;
         for (int i = 0; i <= steps; ++i)
@@ -2113,6 +2465,15 @@ ScratchEditor::ScratchEditor (ScratchProcessor& p)
     enButton.setTooltip ("Language");
     jaButton.setTooltip (u8 ("言語"));
 
+    addAndMakeVisible (skinButton);
+    skinButton.onClick = [this]
+    {
+        deck::setSkin (deck::white() ? deck::Skin::deck : deck::Skin::white);
+        deck::saveSkin();
+        applySkin();
+    };
+    applySkin();
+
     applyLanguage();
 
     setSize (940, 742);
@@ -2203,8 +2564,28 @@ void ScratchEditor::setLanguage (bool jp)
     applyLanguage();
 }
 
+void ScratchEditor::applySkin()
+{
+    shownSkin = deck::currentSkin();
+    laf.refreshSkin();
+    for (auto& p : panels)
+        for (auto* k : p.knobs)
+        {
+            k->slider.setColour (juce::Slider::rotarySliderFillColourId, deck::accent (p.colour));
+            k->slider.setColour (juce::Slider::textBoxTextColourId, deck::pick (textCol, deck::whiteMuted));
+        }
+    gridLabel.setColour (juce::Label::textColourId, deck::pick (mutedCol, deck::whiteMuted));
+    sendLookAndFeelChange();
+    applyLanguage(); // 文字の書体も変わるので、ラベルの文字を作り直す
+    resized();
+    repaint();
+}
+
 void ScratchEditor::applyLanguage()
 {
+    skinButton.setButtonText (u8 (japanese ? "見た目" : "LOOK"));
+    skinButton.setTooltip (u8 (japanese ? "黒い CDJ 風の見た目と、白い見た目を切り替えます。どのプロジェクトでも同じ見た目になります。"
+                                        : "Switches between the dark deck look and the white look. The choice applies to all projects."));
     enButton.setToggleState (! japanese, juce::dontSendNotification);
     jaButton.setToggleState (japanese, juce::dontSendNotification);
     platter.japanese = japanese;
@@ -2321,8 +2702,8 @@ void ScratchEditor::applyLanguage()
 
     platter.setTooltip (u8 (japanese ? "レコードをDJのようにドラッグして、スクラッチできます。時計回りで前へ、反時計回りで後ろへ進みます。ノートが無くても鳴らせます。"
                                      : "Drag the record like a DJ. Clockwise plays forward, counter-clockwise plays backward. Works even without notes."));
-    sourceView.setTooltip (u8 (japanese ? "サンプルのときは、クリックした位置からスクラッチを始めます(頭出し)。オレンジの範囲が、押し出す範囲です。"
-                                        : "For samples, click to set where the scratch starts (the cue). The orange area is how far the record is pushed."));
+    sourceView.setTooltip (u8 (japanese ? "サンプルのときは、クリックした位置からスクラッチを始めます(頭出し)。色の付いた範囲が、押し出す範囲です。ホイールで拡大、右クリックで全体に戻します。"
+                                        : "For samples, click to set where the scratch starts (the cue). The highlighted area is how far the record is pushed. Use the wheel to zoom, right-click to see the whole sample."));
     repaint();
 }
 
@@ -2443,11 +2824,6 @@ PatternPrompt::PatternPrompt()
 {
     field.setFont (fontOf (15.0f, true));
     field.setInputRestrictions (60);
-    field.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff0b0e12));
-    field.setColour (juce::TextEditor::textColourId, deck::lcdBlue);
-    field.setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff3a4048));
-    field.setColour (juce::TextEditor::focusedOutlineColourId, deck::ledAmber);
-    field.setColour (juce::CaretComponent::caretColourId, deck::lcdBlue);
     field.onReturnKey = [this] { accept(); };
     field.onEscapeKey = [this] { setVisible (false); };
     okButton.onClick = [this] { accept(); };
@@ -2462,6 +2838,11 @@ PatternPrompt::PatternPrompt()
 void PatternPrompt::open (const juce::String& newTitle, const juce::String& newMessage, bool askName, const juce::String& name,
                           const juce::String& okText, const juce::String& cancelText, std::function<void (juce::String)> onOk)
 {
+    field.setColour (juce::TextEditor::backgroundColourId, deck::pick (juce::Colour (0xff0b0e12), juce::Colours::white));
+    field.setColour (juce::TextEditor::textColourId, deck::pick (deck::lcdBlue, deck::whiteInk));
+    field.setColour (juce::TextEditor::outlineColourId, deck::pick (juce::Colour (0xff3a4048), juce::Colour (0xffcbd1d9)));
+    field.setColour (juce::TextEditor::focusedOutlineColourId, deck::pick (deck::ledAmber, deck::whiteTeal));
+    field.setColour (juce::CaretComponent::caretColourId, deck::pick (deck::lcdBlue, deck::whiteInk));
     title = newTitle;
     message = newMessage;
     action = std::move (onOk);
@@ -2489,10 +2870,10 @@ juce::Rectangle<int> PatternPrompt::boxBounds() const
 
 void PatternPrompt::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colours::black.withAlpha (0.6f));
+    g.fillAll (juce::Colours::black.withAlpha (deck::white() ? 0.28f : 0.6f));
     const auto box = boxBounds();
     deck::drawMetalPanel (g, box.toFloat(), deck::ledAmber, title, hasWide (title));
-    g.setColour (juce::Colours::white.withAlpha (0.85f));
+    g.setColour (deck::pick (juce::Colours::white.withAlpha (0.85f), deck::whiteInk));
     g.setFont (fontOf (13.0f, false));
     g.drawFittedText (message, box.reduced (20, 0).withTrimmedTop (38).withHeight (24), juce::Justification::centredLeft, 2);
 }
@@ -2608,6 +2989,9 @@ void ScratchEditor::timerCallback()
     startKnob->slider.setAlpha (sampleMode ? 1.0f : 0.32f);
     startKnob->label.setAlpha (sampleMode ? 1.0f : 0.32f);
 
+    if (shownSkin != deck::currentSkin()) // 別のトラックの画面で切り替えた時
+        applySkin();
+
     repaint (header);
     platter.repaint();
     sourceView.repaint();
@@ -2623,6 +3007,7 @@ void ScratchEditor::resized()
         enButton.setBounds (langArea.removeFromLeft (38));
         langArea.removeFromLeft (6);
         jaButton.setBounds (langArea);
+        skinButton.setBounds (header.withSizeKeepingCentre (header.getWidth(), 24).removeFromRight (398).removeFromLeft (92));
     }
     area.removeFromTop (6);
 
@@ -2784,18 +3169,32 @@ void ScratchEditor::paintHeader (juce::Graphics& g)
 {
     auto h = header.toFloat();
 
-    // ロゴ: シルク印刷 (影で少し浮かせる)
-    deck::drawChromeText (g, "CUE BURN", h.withWidth (200.0f), 28.0f, deck::ledAmber);
-    g.setFont (fontOf (10.0f, true, 0.3f));
-    g.setColour (deck::ledAmber.withAlpha (0.85f));
-    g.drawText ("DIGITAL SCRATCH DECK", (int) h.getX() + 184, (int) h.getY() + 6, 240, (int) h.getHeight(), juce::Justification::centredLeft);
+    if (deck::white())
+    {
+        // ロゴ: グラフィティの書体 (Sedgwick Ave Display)
+        g.setFont (deck::logoFont (36.0f));
+        g.setColour (deck::whiteInk);
+        g.drawText ("Cue Burn", h.withWidth (220.0f).translated (0.0f, -1.0f), juce::Justification::centredLeft);
+        const float lw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), "Cue Burn");
+        g.setFont (fontOf (10.0f, true, 0.3f));
+        g.setColour (deck::whiteTeal);
+        g.drawText ("DIGITAL SCRATCH DECK", (int) (h.getX() + lw + 16.0f), (int) h.getY() + 4, 240, (int) h.getHeight(), juce::Justification::centredLeft);
+    }
+    else
+    {
+        // ロゴ: シルク印刷 (影で少し浮かせる)
+        deck::drawChromeText (g, "CUE BURN", h.withWidth (200.0f), 28.0f, deck::ledAmber);
+        g.setFont (fontOf (10.0f, true, 0.3f));
+        g.setColour (deck::ledAmber.withAlpha (0.85f));
+        g.drawText ("DIGITAL SCRATCH DECK", (int) h.getX() + 184, (int) h.getY() + 6, 240, (int) h.getHeight(), juce::Justification::centredLeft);
+    }
 
     // 出力メーター: LED の列
     auto right = h;
     right.removeFromRight (104); // 言語ボタン
     auto box = right.removeFromRight (190);
     g.setFont (fontOf (10.0f, true, 0.15f));
-    g.setColour (mutedCol);
+    g.setColour (deck::pick (mutedCol, deck::whiteMuted));
     g.drawText ("OUT", (int) box.getX(), (int) box.getY(), 30, (int) box.getHeight(), juce::Justification::centredLeft);
     auto meter = box.withTrimmedLeft (34).withSizeKeepingCentre (box.getWidth() - 34.0f, 10.0f);
     deck::drawLcd (g, meter.expanded (3.0f, 3.0f), 3.0f);

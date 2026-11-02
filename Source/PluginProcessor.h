@@ -51,6 +51,7 @@ public:
     static constexpr int numRates = 9;                 // 1/2 1/4 1/8 1/16 1/32 1/4T 1/8T 1/16T 1/32T
     static constexpr int numSources = 5;
     static constexpr int numWaveBins = 200;
+    static constexpr int maxOverviewBlocks = 200000;   // 波形の表示用データの細かさの上限
     static constexpr double revSeconds = 1.8;          // レコード1周の長さ (33 1/3 rpm)
     static constexpr int rootNote = 60;                // この高さで、元の音程 (FL Studio の表記で C5)
     static constexpr double baseFreq = 261.6255653006; // 波形の音源の、元の音程の周波数
@@ -72,6 +73,20 @@ public:
     void setSample (juce::AudioBuffer<float>&& data, double rate, const juce::String& name, const juce::String& path);
     const juce::String& getSampleName() const noexcept { return sampleName; }
     double getSampleSeconds() const noexcept { return uiSampleSeconds.load(); }
+
+    // 波形の表示用: サンプルを細かい塊に分けて、塊ごとの最小・最大・音量をまとめたもの
+    struct WaveOverview
+    {
+        struct Column { float lo = 0.0f, hi = 0.0f, rms = 0.0f; };
+
+        int numSamples = 0, blockSize = 1;
+        float peak = 1.0f;
+        std::vector<float> lo, hi, power;
+
+        // サンプルの [from, to) (0〜1) を1本にまとめる。値は一番大きい所が 1 になる
+        Column column (double from, double to) const noexcept;
+    };
+    std::shared_ptr<const WaveOverview> getWaveOverview() const;
     bool canLoad (const juce::String& fileName) const;
     // プリセットサンプル (プラグインに入っている声・ホーンなど)。一覧は PresetSamples.h
     bool loadPresetSample (int index);
@@ -307,6 +322,8 @@ private:
     // 音源
     std::unique_ptr<SampleData> sample;
     juce::SpinLock sampleLock;
+    std::shared_ptr<const WaveOverview> waveOverview;
+    juce::SpinLock waveLock; // 画面が使う。オーディオスレッドは触らない
     juce::String sampleName, samplePath; // メッセージスレッドだけで使う
     std::vector<float> noiseTable;
 

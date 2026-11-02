@@ -490,13 +490,75 @@ void ScratchProcessor::setSample (juce::AudioBuffer<float>&& data, double rate, 
     for (int b = 0; b < numWaveBins; ++b)
         uiWave[(size_t) b].store (bins[(size_t) b] / overall);
 
+    // 拡大しても形が読めるように、細かい塊でも持っておく
+    auto overview = std::make_shared<WaveOverview>();
+    overview->numSamples = n;
+    overview->blockSize = juce::jmax (4, (n + maxOverviewBlocks - 1) / maxOverviewBlocks);
+    overview->peak = overall;
+    const int numBlocks = (n + overview->blockSize - 1) / overview->blockSize;
+    overview->lo.assign ((size_t) numBlocks, 0.0f);
+    overview->hi.assign ((size_t) numBlocks, 0.0f);
+    overview->power.assign ((size_t) numBlocks, 0.0f);
+    const int numCh = fresh->data.getNumChannels();
+    for (int b = 0; b < numBlocks; ++b)
+    {
+        const int s = b * overview->blockSize;
+        const int e = juce::jmin (n, s + overview->blockSize);
+        float lo = 0.0f, hi = 0.0f, sum = 0.0f;
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const auto* src = fresh->data.getReadPointer (ch);
+            for (int i = s; i < e; ++i)
+            {
+                lo = juce::jmin (lo, src[i]);
+                hi = juce::jmax (hi, src[i]);
+                sum += src[i] * src[i];
+            }
+        }
+        overview->lo[(size_t) b] = lo;
+        overview->hi[(size_t) b] = hi;
+        overview->power[(size_t) b] = sum / (float) juce::jmax (1, (e - s) * numCh);
+    }
+
     {
         const juce::SpinLock::ScopedLockType lock (sampleLock);
         std::swap (sample, fresh); // 古いサンプルは、ロックの外で解放する
     }
+    {
+        const juce::SpinLock::ScopedLockType lock (waveLock);
+        waveOverview = std::move (overview);
+    }
     sampleName = name;
     samplePath = path;
     uiSampleSeconds.store (n > 0 ? (double) n / rate : 0.0);
+}
+
+std::shared_ptr<const ScratchProcessor::WaveOverview> ScratchProcessor::getWaveOverview() const
+{
+    const juce::SpinLock::ScopedLockType lock (waveLock);
+    return waveOverview;
+}
+
+ScratchProcessor::WaveOverview::Column ScratchProcessor::WaveOverview::column (double from, double to) const noexcept
+{
+    Column c;
+    const int numBlocks = (int) lo.size();
+    if (numBlocks == 0 || peak <= 0.0f)
+        return c;
+
+    const int first = juce::jlimit (0, numBlocks - 1, (int) (from * numSamples / blockSize));
+    const int last = juce::jlimit (first, numBlocks - 1, (int) std::ceil (to * numSamples / blockSize) - 1);
+    float sum = 0.0f;
+    for (int b = first; b <= last; ++b)
+    {
+        c.lo = juce::jmin (c.lo, lo[(size_t) b]);
+        c.hi = juce::jmax (c.hi, hi[(size_t) b]);
+        sum += power[(size_t) b];
+    }
+    c.lo /= peak;
+    c.hi /= peak;
+    c.rms = std::sqrt (sum / (float) (last - first + 1)) / peak;
+    return c;
 }
 
 //==============================================================================

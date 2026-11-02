@@ -56,6 +56,7 @@ void snapshot (ScratchProcessor& p, const juce::String& path, std::function<void
     juce::PNGImageFormat().writeImageToStream (img, out);
     std::printf ("wrote %s (%dx%d)\n", path.toRawUTF8(), img.getWidth(), img.getHeight());
 }
+
 }
 
 int main (int argc, char** argv)
@@ -204,6 +205,58 @@ int main (int argc, char** argv)
         p.setBars (2);
         p.loadTemplate (ScratchProcessor::firstGenreTemplate + 1);
         snapshot (p, dir + "/ui_genre_ja.png");
+    }
+    { // 波形: 本物のプリセットの声の全体表示と、頭出し付近を拡大した表示 (日本語・英語)
+        ScratchProcessor p;
+        make (p, "ja");
+        p.loadPresetSample (6);
+        setParam (p, "src", 4.0f);
+        setParam (p, "start", 0.12f);
+        setParam (p, "depth", 120.0f);
+        snapshot (p, dir + "/ui_wave_full_ja.png");
+        snapshot (p, dir + "/ui_wave_zoom_ja.png", [] (ScratchEditor& ed) { ed.getSourceView().setView (0.08, 0.12); });
+        p.apvts.state.setProperty ("lang", "en", nullptr);
+        snapshot (p, dir + "/ui_wave_full_en.png");
+    }
+    { // 波形: 30秒の長いサンプル (下の帯と、一番拡大した表示)
+        ScratchProcessor p;
+        make (p, "ja");
+        const int n = (int) (30.0 * fs);
+        juce::AudioBuffer<float> b (2, n);
+        for (int i = 0; i < n; ++i)
+        {
+            const double t = (double) i / fs;
+            const double beat = std::fmod (t, 0.5);
+            const float v = (float) (std::exp (-beat * 7.0) * (0.3 + 0.7 * std::abs (std::sin (0.2 * t))) * std::sin (6.283185307 * (110.0 + 40.0 * std::floor (t / 2.0)) * t));
+            b.setSample (0, i, v);
+            b.setSample (1, i, v);
+        }
+        p.setSample (std::move (b), fs, "long_track.wav", "");
+        setParam (p, "src", 4.0f);
+        setParam (p, "start", 0.41f);
+        snapshot (p, dir + "/ui_wave_long_ja.png");
+        snapshot (p, dir + "/ui_wave_long_zoom_ja.png", [] (ScratchEditor& ed) { ed.getSourceView().setView (0.405, 0.1 / 30.0); });
+    }
+    { // White スキン: 音を鳴らしている画面、ブロックのホバー、波形エディタ、名前の入力、英語、単発
+        auto useWhite = [] (ScratchEditor& ed) { deck::setSkin (deck::Skin::white); ed.applySkin(); };
+        ScratchProcessor p;
+        make (p, "ja");
+        p.loadPresetSample (6);
+        setParam (p, "src", 4.0f);
+        setParam (p, "start", 0.12f);
+        p.loadTemplate (ScratchProcessor::emptyTemplate + 1);
+        process (p, 0.6, 60);
+        snapshot (p, dir + "/ui_white_ja.png", useWhite);
+        snapshot (p, dir + "/ui_white_hover_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.getTimeline().showHover (1); });
+        snapshot (p, dir + "/ui_white_editor_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.showPatternEditor (9); });
+        snapshot (p, dir + "/ui_white_prompt_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.askSavePattern(); });
+        p.apvts.state.setProperty ("lang", "en", nullptr);
+        snapshot (p, dir + "/ui_white_en.png", useWhite);
+        p.apvts.state.setProperty ("lang", "ja", nullptr);
+        setParam (p, "mode", 1.0f);
+        snapshot (p, dir + "/ui_white_single_ja.png", useWhite);
+        setParam (p, "mode", 0.0f);
+        deck::setSkin (deck::Skin::deck);
     }
     return 0;
 }

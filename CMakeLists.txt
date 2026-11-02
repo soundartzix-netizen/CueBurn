@@ -15,7 +15,9 @@ FetchContent_MakeAvailable(JUCE)
 
 # プリセットサンプル (Samples/*.flac) を、プラグインに埋め込む
 file(GLOB SCRATCH_SAMPLE_FILES CONFIGURE_DEPENDS Samples/*.flac)
-juce_add_binary_data(ScratchSamples SOURCES ${SCRATCH_SAMPLE_FILES})
+# White の見た目の書体 (どちらも OFL。配布時は Fonts/OFL-*.txt を同梱する)
+juce_add_binary_data(ScratchSamples SOURCES ${SCRATCH_SAMPLE_FILES}
+    Fonts/SedgwickAveDisplay-Regular.ttf Fonts/Murecho-Medium.ttf)
 
 set(SCRATCH_SOURCES
     Source/PluginProcessor.cpp
@@ -77,6 +79,17 @@ target_link_libraries(UiSnapshot PRIVATE ScratchSamples juce::juce_audio_utils j
     PUBLIC juce::juce_recommended_config_flags)
 if (MSVC)
     target_compile_options(UiSnapshot PRIVATE /utf-8)
+endif()
+
+# --- 告知動画の素材づくり: エディタの画面と音をコマごとに書き出す ---
+juce_add_console_app(PromoVideo PRODUCT_NAME "PromoVideo")
+target_sources(PromoVideo PRIVATE Tests/PromoVideo.cpp ${SCRATCH_SOURCES})
+target_include_directories(PromoVideo PRIVATE Common Source)
+target_compile_definitions(PromoVideo PUBLIC ${SCRATCH_DEFS} JUCE_MODAL_LOOPS_PERMITTED=1)
+target_link_libraries(PromoVideo PRIVATE ScratchSamples juce::juce_audio_utils juce::juce_dsp
+    PUBLIC juce::juce_recommended_config_flags)
+if (MSVC)
+    target_compile_options(PromoVideo PRIVATE /utf-8)
 endif()
 
 # --- 聴き比べ用: テンプレートを指定テンポで WAV に書き出す ---
