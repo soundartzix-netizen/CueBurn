@@ -6,6 +6,8 @@ FL Studio (および VST3 に対応する他の DAW) 用の、無料のスクラ
 
 ![Cue Burn の画面](docs/screenshot.png)
 
+![Cue Burn の画面 (White)](docs/screenshot_white.png)
+
 **Windows 64bit / FL Studio で動作確認しています。macOS には対応していません。FL Studio 以外の DAW での動作は未確認です。**
 
 *English: Cue Burn is a free turntable-scratch instrument (VST3, Windows 64-bit). Place a note and it plays a scratch phrase built from editable blocks. The UI is available in English and Japanese. Tested in FL Studio only.*
@@ -66,6 +68,12 @@ FL Studio (および VST3 に対応する他の DAW) 用の、無料のスクラ
 
 レコードをマウスでドラッグして、直接スクラッチすることもできます。各項目の **?** にカーソルを合わせると説明が出ます。右上の **EN / 日本語** で表示言語を切り替えられます。
 
+サンプルの波形は、ホイールで拡大、右クリックで全体に戻ります。拡大中は、下の細い帯をドラッグして見る位置を動かせます。
+
+### 見た目
+
+右上の **見た目** ボタンで、黒い CDJ 風の見た目 (Deck) と、白い見た目 (White) を切り替えられます。配置と操作はどちらも同じです。選んだ見た目は、どのプロジェクトでも共通です。
+
 ## 既知の制約
 
 - macOS 版はありません。
@@ -91,6 +99,11 @@ cmake --build build --config Release --target CueBurn_VST3
 
 - **声**: [Sound Artz Voice Samples](https://github.com/soundartzix-netizen/voice-samples) から収録しています。条件は同リポジトリをご覧ください。
 - **声以外 (ホーン・オケヒット・シンセ・808・ギター)**: Stable Audio 3 で生成した音です。楽曲制作に使えますが、Stability AI Community License により、生成 AI モデルの作成・改良 (学習など) には使えません。
+
+`Fonts` フォルダの書体は、White の見た目のためにプラグインへ埋め込んでいます。どちらも [SIL Open Font License 1.1](https://openfontlicense.org) です。ライセンス文は `Fonts/OFL-*.txt` (配布 zip では `fonts` フォルダ) にあります。
+
+- **Murecho** (太さ 500 に固定した版): Copyright 2021 The Murecho Project Authors
+- **Sedgwick Ave Display**: Copyright 2017 The Sedgwick Ave Project Authors
 
 ## 無保証について
 
