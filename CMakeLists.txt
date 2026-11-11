@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # ランタイムを静的リンク (VC++ランタイム未導入のPCでも動くように)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(CueBurn VERSION 1.0.1)
+project(CueBurn VERSION 1.0.2)
 
 include(FetchContent)
 FetchContent_Declare(
