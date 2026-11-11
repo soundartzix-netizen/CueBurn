@@ -797,15 +797,15 @@ void ScratchProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
                     evGainTarget = 1.0f - human * 0.25f * hash01 (h, 3u);
                     const double r2 = ratio * std::exp2 ((double) e.pitch / 12.0);
                     lastCue = e.cue;
-                    // このブロックだけのカーブ (曲げ) と、1往復の中で鳴らす終わり
-                    const bool warped = e.bendRise != 0.0f || e.bendFall != 0.0f;
+                    // このブロックだけのカーブ (曲げ・頂点の位置) と、1往復の中で鳴らす終わり
+                    const bool warped = isWarped (e);
                     const float ap = live->apex[(size_t) juce::jlimit (0, numPatterns - 1, e.pattern)];
-                    const float phiW = warped ? warpPhase (phiF, ap, e.bendRise, e.bendFall) : phiF;
+                    const float phiW = warped ? warpEvent (e, phiF, ap) : phiF;
                     target = cueNow + (double) e.cue + (double) rtD (e.pattern, phiW) * depthSec * (double) e.depth * (double) depthJit * r2;
                     // ミュートしたところは、レコードは動いたまま、フェーダーだけ閉じる (人間味の遅れにも合わせる)
                     const int relTick = (int) std::floor (evBeat * (double) ticksPerBeat);
                     const bool muted = relTick >= 0 && relTick < e.len && relTick < maxEventTicks && e.mute[(size_t) relTick];
-                    const bool fast = warped ? rtFastWarped (e.pattern, phiF, cut, ap, e.bendRise, e.bendFall) : rtFast (e.pattern, phiF, cut);
+                    const bool fast = warped ? rtFastWarped (e, phiF, cut, ap) : rtFast (e.pattern, phiF, cut);
                     // 鳴らす終わりを元の終わりより後ろにした時は、元の終わりからそこまで、フェーダーを開けたまま
                     const float nat = live->natEnd[(size_t) found];
                     const bool held = e.tail < 1.0f && e.tail > nat && phiF >= nat;
@@ -1005,6 +1005,8 @@ juce::ValueTree ScratchProcessor::phraseToTree (const Phrase& source) const
             ev.setProperty ("bf", e.bendFall, nullptr);
             ev.setProperty ("tl", e.tail, nullptr);
         }
+        if (e.apexAt >= 0.0f)
+            ev.setProperty ("ap", e.apexAt, nullptr);
         if (e.mute.any())
             ev.setProperty ("m", muteToString (e.mute, e.len), nullptr);
         ph.appendChild (ev, nullptr);
@@ -1039,6 +1041,8 @@ ScratchProcessor::Phrase ScratchProcessor::phraseFromTree (const juce::ValueTree
         e.bendRise = juce::jlimit (-1.0f, 1.0f, (float) ev.getProperty ("br", 0.0f));
         e.bendFall = juce::jlimit (-1.0f, 1.0f, (float) ev.getProperty ("bf", 0.0f));
         e.tail = juce::jlimit (0.03f, 1.0f, (float) ev.getProperty ("tl", 1.0f));
+        if (const float at = (float) ev.getProperty ("ap", -1.0f); at >= 0.0f)
+            e.apexAt = juce::jlimit (0.05f, 0.95f, at);
         p.events.push_back (e);
     }
     return p;

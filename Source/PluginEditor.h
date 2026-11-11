@@ -122,21 +122,22 @@ public:
     void showHover (int eventIndex) { hoverEvent = eventIndex; repaint(); }      // 表示の確認用 (マウスを乗せた表示)
 
 private:
-    enum class Drag { none, pending, depth, gate, start, move, select, mute, bendRise, bendFall, tail }; // pending = 押しただけ (動かした向きで、移動か振り幅かを決める)
+    enum class Drag { none, pending, depth, gate, start, move, select, mute, bendRise, bendFall, tail, apex }; // pending = 押しただけ (動かした向きで、移動か振り幅かを決める)
 
-    // ブロックの上でカーブを編集する (1周目に、始点・頂点の印、◇ = 曲がり具合、▼ = 鳴らす終わり)
+    // ブロックの上でカーブを編集する (1周目に、始点の印、● = 頂点の位置、◇ = 曲がり具合、▼ = 鳴らす終わり)
     struct BlockGeom
     {
         juce::Rectangle<float> area; // カーブを描く所
         float cycleW = 0.0f;         // 1往復の幅 (px)
         float depthScale = 1.0f;
-        float apex = 0.5f;
+        float apex = 0.5f;           // パターンの頂点の位置
+        float at = 0.5f;             // このブロックで頂点を置いている位置
         bool ok = false;             // つまみを出せる大きさか
     };
     BlockGeom blockGeom (int eventIndex) const;
     juce::Point<float> curvePoint (int eventIndex, const BlockGeom&, float phi) const;
     float audibleEnd (int eventIndex, const BlockGeom&, float tail) const; // 1往復の中で、音が鳴り終わる位置
-    int handleAt (int eventIndex, juce::Point<float>) const;               // 1 = 上りのカーブ、2 = 下りのカーブ、3 = 鳴らす終わり
+    int handleAt (int eventIndex, juce::Point<float>) const;               // 1 = 上りのカーブ、2 = 下りのカーブ、3 = 鳴らす終わり、4 = 頂点の位置
 
     juce::Rectangle<float> laneArea() const;
     int totalTicks() const;

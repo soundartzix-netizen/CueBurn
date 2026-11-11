@@ -250,6 +250,12 @@ int main (int argc, char** argv)
         snapshot (p, dir + "/ui_white_hover_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.getTimeline().showHover (1); });
         snapshot (p, dir + "/ui_white_editor_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.showPatternEditor (9); });
         snapshot (p, dir + "/ui_white_prompt_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.askSavePattern(); });
+        // 頂点の位置: ベイビー (2つ目) の頂点を、元の位置と真ん中で比べる
+        snapshot (p, dir + "/ui_white_apex_before_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.getTimeline().showHover (2); });
+        p.beginEdit();
+        p.setEventApex (2, 0.5f);
+        snapshot (p, dir + "/ui_white_apex_mid_ja.png", [useWhite] (ScratchEditor& ed) { useWhite (ed); ed.getTimeline().showHover (2); });
+        p.back();
         p.apvts.state.setProperty ("lang", "en", nullptr);
         snapshot (p, dir + "/ui_white_en.png", useWhite);
         p.apvts.state.setProperty ("lang", "ja", nullptr);

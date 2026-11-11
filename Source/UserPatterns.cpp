@@ -327,13 +327,14 @@ float ScratchProcessor::presetMaxSlope (int pattern) noexcept
     return table[(size_t) juce::jlimit (0, numPresetPatterns - 1, pattern)];
 }
 
-float ScratchProcessor::warpPhase (float phi, float apex, float rise, float fall) noexcept
+float ScratchProcessor::warpPhase (float phi, float apex, float at, float rise, float fall) noexcept
 {
     apex = juce::jlimit (0.02f, 0.98f, apex);
+    at = juce::jlimit (0.02f, 0.98f, at);
     phi = juce::jlimit (0.0f, 1.0f, phi);
-    if (phi < apex)
-        return apex * curveValue (curveSingle, rise, phi / apex);
-    return apex + (1.0f - apex) * curveValue (curveSingle, fall, (phi - apex) / (1.0f - apex));
+    if (phi < at)
+        return apex * curveValue (curveSingle, rise, phi / at);
+    return apex + (1.0f - apex) * curveValue (curveSingle, fall, (phi - at) / (1.0f - at));
 }
 
 float ScratchProcessor::patternApex (int pattern) const
@@ -359,14 +360,15 @@ float ScratchProcessor::naturalEnd (const FillEvent& e) const
     for (int k = 0; k < 200; ++k)
     {
         const float phi = ((float) k + 0.5f) / 200.0f;
-        if (shapeGate (e.pattern, warpPhase (phi, apex, e.bendRise, e.bendFall)))
+        if (shapeGate (e.pattern, warpEvent (e, phi, apex)))
             last = (float) (k + 1) / 200.0f;
     }
     return last;
 }
 
-bool ScratchProcessor::rtFastWarped (int pattern, float phi, float cut, float apex, float rise, float fall) const noexcept
+bool ScratchProcessor::rtFastWarped (const FillEvent& e, float phi, float cut, float apex) const noexcept
 {
+    const int pattern = e.pattern;
     switch (pattern)
     {
         case 0: case 2: case 5: case 10: case 11: cut *= 0.5f; break;
@@ -375,8 +377,8 @@ bool ScratchProcessor::rtFastWarped (int pattern, float phi, float cut, float ap
     if (cut <= 0.001f)
         return true;
     constexpr float h = 0.002f;
-    const float a = rtD (pattern, warpPhase (juce::jmax (0.0f, phi - h), apex, rise, fall));
-    const float b = rtD (pattern, warpPhase (juce::jmin (1.0f, phi + h), apex, rise, fall));
+    const float a = rtD (pattern, warpEvent (e, juce::jmax (0.0f, phi - h), apex));
+    const float b = rtD (pattern, warpEvent (e, juce::jmin (1.0f, phi + h), apex));
     const float slope = std::abs (b - a) / (2.0f * h);
     const int p = juce::jlimit (0, numPatterns - 1, pattern);
     const float maxS = live->useShape[(size_t) p] ? live->shapeMaxSlope[(size_t) p] : presetMaxSlope (p);

@@ -903,6 +903,15 @@ void ScratchProcessor::setEventTail (int eventIndex, float tail)
     publishPhrase();
 }
 
+void ScratchProcessor::setEventApex (int eventIndex, float at)
+{
+    if (eventIndex < 0 || eventIndex >= (int) phrase.events.size())
+        return;
+    phrase.events[(size_t) eventIndex].apexAt = at < 0.0f ? -1.0f : juce::jlimit (0.05f, 0.95f, at);
+    phrase.edited = true;
+    publishPhrase();
+}
+
 void ScratchProcessor::resetEventCurve (int eventIndex)
 {
     if (eventIndex < 0 || eventIndex >= (int) phrase.events.size())
@@ -911,6 +920,7 @@ void ScratchProcessor::resetEventCurve (int eventIndex)
     p.edited = true;
     auto& e = p.events[(size_t) eventIndex];
     e.bendRise = e.bendFall = 0.0f;
+    e.apexAt = -1.0f;
     e.tail = 1.0f;
     setPhrase (std::move (p));
 }

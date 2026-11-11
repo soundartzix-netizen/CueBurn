@@ -116,6 +116,7 @@ public:
         float gate = 1.0f;    // 鳴らす長さ (ブロックの何割まで鳴らすか。0.1〜1。短いと、そこで切れる)
         float bendRise = 0.0f; // このブロックだけのカーブ: 始点 → 頂点 の曲がり具合 (-1〜1。0 = パターンのまま)
         float bendFall = 0.0f; //                          頂点 → 終わり の曲がり具合
+        float apexAt = -1.0f;  // 頂点を置く位置 (1往復の中の 0.05〜0.95。-1 = パターンのまま)
         float tail = 1.0f;     // 1往復の中で、どこまで鳴らすか (0.03〜1。1 = パターンのまま。元の終わりより後ろなら、そこまで伸ばす)
         std::bitset<maxEventTicks> mute; // ミュートしたティック (ブロックの頭から数える)。レコードは動き続け、フェーダーだけ閉じる
     };
@@ -165,9 +166,15 @@ public:
     // ブロックだけのカーブ (フィル画面で、ブロックの上で編集)。ドラッグ中は、その場で書き換える (始めに beginEdit)
     void setEventBend (int eventIndex, float rise, float fall);
     void setEventTail (int eventIndex, float tail);
-    void resetEventCurve (int eventIndex);            // カーブと終わりを元に戻す (履歴に積む)
-    // 1往復の中の位置を、頂点の位置は変えずに曲げる (始点 → 頂点、頂点 → 終わりを、それぞれ片側カーブで)
-    static float warpPhase (float phi, float apex, float rise, float fall) noexcept;
+    void setEventApex (int eventIndex, float at);     // 頂点を置く位置 (-1 = パターンのまま)
+    void resetEventCurve (int eventIndex);            // カーブ・頂点・終わりを元に戻す (履歴に積む)
+    // 1往復の中の位置を曲げる: パターンの頂点 (apex) が at に来るようにずらし、始点 → 頂点、頂点 → 終わりを、それぞれ片側カーブで曲げる
+    static float warpPhase (float phi, float apex, float at, float rise, float fall) noexcept;
+    static bool isWarped (const FillEvent& e) noexcept { return e.bendRise != 0.0f || e.bendFall != 0.0f || e.apexAt >= 0.0f; }
+    static float warpEvent (const FillEvent& e, float phi, float apex) noexcept
+    {
+        return warpPhase (phi, apex, e.apexAt >= 0.0f ? e.apexAt : apex, e.bendRise, e.bendFall);
+    }
     float patternApex (int pattern) const;            // パターンの頂点 (一番押し出した所) の位置 (0〜1)
     float naturalEnd (const FillEvent&) const;        // そのブロックの、元の (伸ばす前の) 鳴り終わりの位置 (0〜1)
     // ブロックの右端のドラッグ: 鳴らす長さをティック(小数)で指定する。ブロック自体もその長さに縮む/空きへ伸びる
@@ -280,7 +287,7 @@ private:
     float rtD (int pattern, float phi) const noexcept;  // オーディオスレッド用 (ユーザー波形は live のコピーを使う)
     // カット: レコードが十分に速い所か (一番速い所の cut 倍以上)。遅い所はフェーダーで切る
     bool rtFast (int pattern, float phi, float cut) const noexcept;
-    bool rtFastWarped (int pattern, float phi, float cut, float apex, float rise, float fall) const noexcept;
+    bool rtFastWarped (const FillEvent& e, float phi, float cut, float apex) const noexcept;
     static float presetMaxSlope (int pattern) noexcept;
     bool rtGate (int pattern, float phi) const noexcept;
 

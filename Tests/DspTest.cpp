@@ -1688,31 +1688,53 @@ int main()
         for (float r : { -0.9f, 0.0f, 0.7f })
             for (float f : { -0.6f, 0.0f, 0.9f })
             {
-                fixed = fixed && std::abs (SP::warpPhase (0.0f, apex, r, f)) < 1.0e-6f
-                        && std::abs (SP::warpPhase (apex, apex, r, f) - apex) < 1.0e-5f
-                        && std::abs (SP::warpPhase (1.0f, apex, r, f) - 1.0f) < 1.0e-5f;
+                fixed = fixed && std::abs (SP::warpPhase (0.0f, apex, apex, r, f)) < 1.0e-6f
+                        && std::abs (SP::warpPhase (apex, apex, apex, r, f) - apex) < 1.0e-5f
+                        && std::abs (SP::warpPhase (1.0f, apex, apex, r, f) - 1.0f) < 1.0e-5f;
                 float prev = -1.0f;
                 for (int i = 0; i <= 200; ++i)
                 {
-                    const float w = SP::warpPhase ((float) i / 200.0f, apex, r, f);
+                    const float w = SP::warpPhase ((float) i / 200.0f, apex, apex, r, f);
                     mono = mono && w >= prev - 1.0e-6f;
                     prev = w;
                 }
             }
         check (fixed && mono, "始点・頂点・終わりは同じ位置、順番も入れ替わらない");
-        check (SP::warpPhase (0.15f, apex, -0.8f, 0.0f) > 0.15f && SP::warpPhase (0.15f, apex, 0.8f, 0.0f) < 0.15f,
+        check (SP::warpPhase (0.15f, apex, apex, -0.8f, 0.0f) > 0.15f && SP::warpPhase (0.15f, apex, apex, 0.8f, 0.0f) < 0.15f,
                "上り: マイナスで早く上がる、プラスで遅れて上がる");
-        check (std::abs (SP::warpPhase (0.42f, 0.3f, 0.0f, 0.0f) - 0.42f) < 1.0e-6f, "曲げなければ、そのまま");
+        check (std::abs (SP::warpPhase (0.42f, 0.3f, 0.3f, 0.0f, 0.0f) - 0.42f) < 1.0e-6f, "曲げなければ、そのまま");
 
         ScratchProcessor p;
         check (std::abs (p.patternApex (1) - 0.42f) < 0.02f && std::abs (p.patternApex (9) - 0.15f) < 0.02f,
                "頂点: フォワード " + juce::String (p.patternApex (1), 3) + " / スタブ " + juce::String (p.patternApex (9), 3));
+
+        // 頂点の位置をずらす: パターンの頂点が、置いた位置に来る (始点・終わりはそのまま、順番も入れ替わらない)
+        bool moved = true, monoAt = true;
+        for (float at : { 0.2f, 0.5f, 0.8f })
+        {
+            moved = moved && std::abs (SP::warpPhase (at, apex, at, 0.0f, 0.0f) - apex) < 1.0e-5f
+                    && std::abs (SP::warpPhase (0.0f, apex, at, 0.5f, -0.5f)) < 1.0e-6f
+                    && std::abs (SP::warpPhase (1.0f, apex, at, 0.5f, -0.5f) - 1.0f) < 1.0e-5f;
+            float prev = -1.0f;
+            for (int i = 0; i <= 200; ++i)
+            {
+                const float w = SP::warpPhase ((float) i / 200.0f, apex, at, 0.5f, -0.5f);
+                monoAt = monoAt && w >= prev - 1.0e-6f;
+                prev = w;
+            }
+        }
+        check (moved && monoAt, "頂点の位置をずらすと、パターンの頂点がそこに来る");
+        SP::FillEvent baby;
+        baby.apexAt = 0.5f;
+        const float babyApex = p.patternApex (0);
+        check (p.shapeD (0, SP::warpEvent (baby, 0.5f, babyApex)) > 0.999f && p.shapeD (0, SP::warpEvent (baby, 0.4f, babyApex)) < 0.95f,
+               "ベイビーの頂点を真ん中に: 50% で押し切る (元は " + juce::String (babyApex, 3) + ")");
     }
 
     // ------------------------------------------------------------------
     std::printf ("B2) ブロックだけのカーブ・鳴らす終わり: 音が変わる。ほかのブロックは変わらない (120BPM)\n");
     {
-        auto render = [] (float rise, float fall, float tail)
+        auto render = [] (float rise, float fall, float tail, float at = -1.0f)
         {
             ScratchProcessor p;
             prepare (p);
@@ -1728,11 +1750,13 @@ int main()
             p.beginEdit();
             p.setEventBend (0, rise, fall);
             p.setEventTail (0, tail);
+            p.setEventApex (0, at);
             return run (p, blocksFor (1.3), { { 0, on (60) } });
         };
         const auto plain = render (0.0f, 0.0f, 1.0f);
         const auto bent = render (-0.8f, 0.0f, 1.0f);
         const auto cut = render (0.0f, 0.0f, 0.2f);
+        const auto late = render (0.0f, 0.0f, 1.0f, 0.6f);
         double dBent = 0.0, dOther = 0.0;
         for (size_t i = 0; i < (size_t) (0.25 * fs); ++i)
             dBent = std::max (dBent, (double) std::abs (plain[i] - bent[i]));
@@ -1740,6 +1764,12 @@ int main()
             dOther = std::max (dOther, (double) std::abs (plain[i] - bent[i]) + std::abs (plain[i] - cut[i]));
         check (dBent > 0.05, "曲げたブロックは、音が変わる (最大差 " + juce::String (dBent, 3) + ")");
         check (dOther < 1.0e-6, "ほかのブロックは、そのまま");
+        double dLate = 0.0, dLateOther = 0.0;
+        for (size_t i = 0; i < (size_t) (0.25 * fs); ++i)
+            dLate = std::max (dLate, (double) std::abs (plain[i] - late[i]));
+        for (size_t i = (size_t) (1.0 * fs); i < (size_t) (1.25 * fs); ++i)
+            dLateOther = std::max (dLateOther, (double) std::abs (plain[i] - late[i]));
+        check (dLate > 0.05 && dLateOther < 1.0e-6, "頂点をずらしたブロックだけ、音が変わる (最大差 " + juce::String (dLate, 3) + ")");
         // フォワードは押す間 (0〜0.42 = 0〜105ms) 鳴る。終わりを 0.2 (50ms) にすると、60〜100ms は無音
         const double a = rms (plain, (size_t) (0.06 * fs), (size_t) (0.1 * fs));
         const double b = rms (cut, (size_t) (0.06 * fs), (size_t) (0.1 * fs));
@@ -1754,15 +1784,18 @@ int main()
         p.beginEdit();
         p.setEventBend (1, 0.4f, -0.3f);
         p.setEventTail (1, 0.55f);
+        p.setEventApex (1, 0.5f);
         juce::MemoryBlock mb;
         p.getStateInformation (mb);
         ScratchProcessor q;
         q.setStateInformation (mb.getData(), (int) mb.getSize());
         const auto& e = q.getPhrase().events[1];
         check (std::abs (e.bendRise - 0.4f) < 1.0e-4f && std::abs (e.bendFall + 0.3f) < 1.0e-4f && std::abs (e.tail - 0.55f) < 1.0e-4f
-                   && q.getPhrase().events[0].tail == 1.0f, "保存・復元で戻る (ほかのブロックは元のまま)");
+                   && std::abs (e.apexAt - 0.5f) < 1.0e-4f && q.getPhrase().events[0].tail == 1.0f
+                   && q.getPhrase().events[0].apexAt < 0.0f, "保存・復元で戻る (ほかのブロックは元のまま)");
         q.resetEventCurve (1);
-        check (q.getPhrase().events[1].bendRise == 0.0f && q.getPhrase().events[1].tail == 1.0f, "元に戻す");
+        check (q.getPhrase().events[1].bendRise == 0.0f && q.getPhrase().events[1].tail == 1.0f
+                   && q.getPhrase().events[1].apexAt < 0.0f, "元に戻す");
         q.back();
         check (std::abs (q.getPhrase().events[1].tail - 0.55f) < 1.0e-4f, "「戻る」で、元に戻す前へ");
         p.back();

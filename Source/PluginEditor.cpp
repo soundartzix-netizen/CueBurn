@@ -839,6 +839,7 @@ FillTimeline::BlockGeom FillTimeline::blockGeom (int i) const
     gm.cycleW = cycles > 0.0 ? gm.area.getWidth() / (float) cycles : 0.0f;
     gm.depthScale = e.depth / 1.5f;
     gm.apex = proc.patternApex (e.pattern);
+    gm.at = e.apexAt >= 0.0f ? e.apexAt : gm.apex;
     gm.ok = gm.cycleW >= 36.0f && gm.area.getWidth() >= 30.0f && gm.area.getHeight() >= 20.0f;
     return gm;
 }
@@ -846,7 +847,7 @@ FillTimeline::BlockGeom FillTimeline::blockGeom (int i) const
 juce::Point<float> FillTimeline::curvePoint (int i, const BlockGeom& gm, float phi) const
 {
     const auto& e = proc.getPhrase().events[(size_t) i];
-    const float w = ScratchProcessor::warpPhase (phi, gm.apex, e.bendRise, e.bendFall);
+    const float w = ScratchProcessor::warpEvent (e, phi, gm.apex);
     return { gm.area.getX() + phi * gm.cycleW, gm.area.getBottom() - gm.area.getHeight() * proc.shapeD (e.pattern, juce::jmin (w, 0.99999f)) * gm.depthScale };
 }
 
@@ -859,7 +860,7 @@ float FillTimeline::audibleEnd (int i, const BlockGeom& gm, float tail) const
     for (int k = 0; k < 200; ++k)
     {
         const float phi = ((float) k + 0.5f) / 200.0f;
-        if (phi < tail && proc.shapeGate (e.pattern, ScratchProcessor::warpPhase (phi, gm.apex, e.bendRise, e.bendFall)))
+        if (phi < tail && proc.shapeGate (e.pattern, ScratchProcessor::warpEvent (e, phi, gm.apex)))
             last = (float) (k + 1) / 200.0f;
     }
     return juce::jmin (last, tail);
@@ -873,8 +874,8 @@ int FillTimeline::handleAt (int i, juce::Point<float> pt) const
     if (! gm.ok)
         return 0;
     const auto& e = proc.getPhrase().events[(size_t) i];
-    const float phis[3] = { gm.apex * 0.5f, gm.apex + (1.0f - gm.apex) * 0.5f, audibleEnd (i, gm, e.tail) };
-    for (int k = 0; k < 3; ++k)
+    const float phis[4] = { gm.at * 0.5f, gm.at + (1.0f - gm.at) * 0.5f, audibleEnd (i, gm, e.tail), gm.at };
+    for (int k = 0; k < 4; ++k)
     {
         const auto h = curvePoint (i, gm, phis[k]);
         if (h.x <= gm.area.getRight() + 1.0f && h.getDistanceFrom (pt) < 7.0f)
@@ -938,11 +939,11 @@ void FillTimeline::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // ブロックの上のつまみ: カーブの曲がり具合 (◇) / 鳴らす終わり (▼)
+    // ブロックの上のつまみ: カーブの曲がり具合 (◇) / 鳴らす終わり (▼) / 頂点の位置 (●)
     if (const int hh = handleAt (dragEvent, e.position); hh > 0)
     {
         const auto& ev = proc.getPhrase().events[(size_t) dragEvent];
-        drag = hh == 1 ? Drag::bendRise : (hh == 2 ? Drag::bendFall : Drag::tail);
+        drag = hh == 1 ? Drag::bendRise : (hh == 2 ? Drag::bendFall : (hh == 3 ? Drag::tail : Drag::apex));
         dragStartY = e.position.y;
         dragStartBend = hh == 1 ? ev.bendRise : ev.bendFall;
         return;
@@ -1053,6 +1054,26 @@ void FillTimeline::mouseDrag (const juce::MouseEvent& e)
         {
             startEdit();
             proc.setEventBend (dragEvent, rise, fall);
+        }
+        repaint();
+        return;
+    }
+
+    if (drag == Drag::apex)
+    {
+        // 左右へ: 頂点を置く位置。パターンの元の位置と、真ん中 (50%) の近くでは吸い付く
+        const auto gm = blockGeom (dragEvent);
+        if (gm.cycleW <= 0.0f)
+            return;
+        float at = juce::jlimit (0.05f, 0.95f, (e.position.x - gm.area.getX()) / gm.cycleW);
+        if (std::abs (at - gm.apex) < 0.02f)
+            at = -1.0f;
+        else if (std::abs (at - 0.5f) < 0.02f)
+            at = 0.5f;
+        if (std::abs (at - ev.apexAt) > 0.002f)
+        {
+            startEdit();
+            proc.setEventApex (dragEvent, at);
         }
         repaint();
         return;
@@ -1188,7 +1209,7 @@ void FillTimeline::mouseMove (const juce::MouseEvent& e)
         if (muteTool)
             setMouseCursor (i >= 0 ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
         else if (hh > 0)
-            setMouseCursor (hh == 3 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
+            setMouseCursor (hh >= 3 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
         else
             setMouseCursor (edge || startEdge ? juce::MouseCursor::LeftRightResizeCursor
                                               : (i >= 0 ? juce::MouseCursor::PointingHandCursor
@@ -1312,8 +1333,8 @@ void FillTimeline::showBlockMenu (int eventIndex)
     m.addSubMenu (u8 (japanese ? "高さ (半音)" : "Pitch (semitones)"), pitch);
     m.addItem (61, u8 (japanese ? "振り幅・長さを 100% に戻す" : "Reset depth and length to 100%"), ev.depth != 1.0f || ev.gate != 1.0f);
     m.addItem (62, u8 (japanese ? "ミュートを全部戻す" : "Clear all mutes"), ev.mute.any());
-    m.addItem (63, u8 (japanese ? "カーブと終わりを元に戻す" : "Reset this block's curve and end"),
-               ev.bendRise != 0.0f || ev.bendFall != 0.0f || ev.tail < 1.0f);
+    m.addItem (63, u8 (japanese ? "カーブ・頂点・終わりを元に戻す" : "Reset this block's curve, peak and end"),
+               ScratchProcessor::isWarped (ev) || ev.tail < 1.0f);
     m.addSeparator();
     m.addItem (90, u8 (japanese ? "この波形を編集… (このパターンを使う全部のブロックに効く)" : "Edit this wave… (affects every block using it)"));
     m.addSubMenu (u8 (japanese ? "ユーザー波形に写して編集…" : "Copy to a user wave and edit…"), copyTo);
@@ -1504,7 +1525,7 @@ void FillTimeline::paint (juce::Graphics& g)
         const double cycles = audTicks / (double) beat / ScratchProcessor::rateBeats (e.rate);
         const int n = juce::jmax (8, (int) curveArea.getWidth());
         const float depthScale = e.depth / 1.5f;
-        const bool warped = e.bendRise != 0.0f || e.bendFall != 0.0f;
+        const bool warped = ScratchProcessor::isWarped (e);
         const float apexE = warped ? proc.patternApex (e.pattern) : 0.5f;
         const float natE = e.tail < 1.0f ? proc.naturalEnd (e) : 1.0f; // 鳴らす終わりを伸ばした時は、元の終わりから明るく
         juce::Point<float> prev;
@@ -1514,7 +1535,7 @@ void FillTimeline::paint (juce::Graphics& g)
         {
             const double c = cycles * (double) k / (double) n;
             const float phiRaw = (float) (c - std::floor (c));
-            const float phi = warped ? ScratchProcessor::warpPhase (phiRaw, apexE, e.bendRise, e.bendFall) : phiRaw;
+            const float phi = warped ? ScratchProcessor::warpEvent (e, phiRaw, apexE) : phiRaw;
             const float d = proc.shapeD (e.pattern, juce::jmin (phi, 0.99999f)) * depthScale;
             const juce::Point<float> pt (curveArea.getX() + curveArea.getWidth() * (float) k / (float) n, curveArea.getBottom() - curveArea.getHeight() * d);
             if (k > 0)
@@ -1542,21 +1563,22 @@ void FillTimeline::paint (juce::Graphics& g)
             g.strokePath (glow, juce::PathStrokeType (4.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
-        // ブロックの上のつまみ (1周目): 始点・頂点の印、◇ = 曲がり具合、▼ = 鳴らす終わり
+        // ブロックの上のつまみ (1周目): 始点の印、● = 頂点の位置、◇ = 曲がり具合、▼ = 鳴らす終わり
         if (hov && ! muteTool && drag != Drag::move)
         {
             const auto gm = blockGeom (i);
             if (gm.ok)
             {
-                auto marker = [&] (float phi)
+                auto marker = [&] (float phi, bool hot)
                 {
                     const auto p = curvePoint (i, gm, phi);
                     if (p.x > gm.area.getRight() + 1.0f)
                         return;
+                    const float rr = hot ? 4.5f : 3.5f;
                     g.setColour (juce::Colour (0xff0b0e12));
-                    g.fillEllipse (p.x - 3.5f, p.y - 3.5f, 7.0f, 7.0f);
-                    g.setColour (col);
-                    g.fillEllipse (p.x - 2.5f, p.y - 2.5f, 5.0f, 5.0f);
+                    g.fillEllipse (p.x - rr, p.y - rr, rr * 2.0f, rr * 2.0f);
+                    g.setColour (hot ? juce::Colours::white : col);
+                    g.fillEllipse (p.x - rr + 1.0f, p.y - rr + 1.0f, rr * 2.0f - 2.0f, rr * 2.0f - 2.0f);
                 };
                 auto diamond = [&] (float phi, bool hot)
                 {
@@ -1570,10 +1592,10 @@ void FillTimeline::paint (juce::Graphics& g)
                     g.setColour (hot ? juce::Colours::white : col);
                     g.strokePath (dia, juce::PathStrokeType (1.3f));
                 };
-                marker (0.0f);
-                marker (gm.apex);
-                diamond (gm.apex * 0.5f, hoverHandle == 1 || (drag == Drag::bendRise && i == dragEvent));
-                diamond (gm.apex + (1.0f - gm.apex) * 0.5f, hoverHandle == 2 || (drag == Drag::bendFall && i == dragEvent));
+                marker (0.0f, false);
+                marker (gm.at, hoverHandle == 4 || (drag == Drag::apex && i == dragEvent));
+                diamond (gm.at * 0.5f, hoverHandle == 1 || (drag == Drag::bendRise && i == dragEvent));
+                diamond (gm.at + (1.0f - gm.at) * 0.5f, hoverHandle == 2 || (drag == Drag::bendFall && i == dragEvent));
                 const auto tp = curvePoint (i, gm, audibleEnd (i, gm, e.tail));
                 if (tp.x <= gm.area.getRight() + 1.0f)
                 {
@@ -1628,6 +1650,13 @@ void FillTimeline::paint (juce::Graphics& g)
                 const float v = rise ? -e.bendRise : e.bendFall;
                 txt = u8 (rise ? (japanese ? "上りのカーブ " : "RISE BEND ") : (japanese ? "下りのカーブ " : "FALL BEND "))
                       + (v >= 0.0f ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + u8 (japanese ? "  (上下にドラッグ)" : "  (DRAG UP/DOWN)");
+            }
+            else if (hoverHandle == 4 || drag == Drag::apex)
+            {
+                const bool own = e.apexAt < 0.0f;
+                const float at = own ? proc.patternApex (e.pattern) : e.apexAt;
+                txt = u8 (japanese ? "頂点の位置 " : "PEAK AT ") + juce::String (juce::roundToInt (at * 100.0f))
+                      + u8 (own ? (japanese ? "% 元のまま" : "% ORIGINAL") : "%") + u8 (japanese ? "  (左右にドラッグ)" : "  (DRAG LEFT/RIGHT)");
             }
             else if (hoverHandle == 3 || drag == Drag::tail)
             {
@@ -2695,8 +2724,8 @@ void ScratchEditor::applyLanguage()
     previewButton.setButtonText (u8 (japanese ? "▶ 試聴" : "▶ PREVIEW"));
     previewButton.setTooltip (u8 (japanese ? "ノートを置かなくても、フレーズを鳴らして確かめられます。もう一度押すと止まります。"
                                            : "Play the phrase without placing notes. Click again to stop."));
-    timeline.setTooltip (u8 (japanese ? "ブロックをクリック: 次のパターン (Shift+クリック: 前のパターン、ホイールでも切り替え)\nブロックの上の ◇: 上下でカーブを曲げる / ▼: 左右で鳴らす終わり (短く・長く)\n横にドラッグ: ブロックを移動\n上下にドラッグ: そのブロックの振り幅\n右端・左端をドラッグ: そのブロックの長さ(縮めるとマスが空き、空きマスへは伸ばせます)\n右クリック: パターン・速さ・高さの変更、波形の編集、削除\n空いているマス: クリック/ドラッグで範囲を選んで、パターンを追加\n「ミュート」をオン: なぞった所の音を消す"
-                                       : "Click a block: next pattern (Shift+click: previous, mouse wheel also works)\nOn a block: drag ◇ up/down to bend the curve, drag ▼ left/right for the sound end\nDrag sideways: move the block\nDrag up/down: depth of that block\nDrag the right or left edge: block length (shortening frees steps; you can also stretch into empty steps)\nRight-click: change pattern, rate, pitch, edit the wave, or delete\nEmpty steps: click or drag to select, then add a pattern\nMUTE on: drag to mute parts of a block"));
+    timeline.setTooltip (u8 (japanese ? "ブロックをクリック: 次のパターン (Shift+クリック: 前のパターン、ホイールでも切り替え)\nブロックの上の ●: 左右で頂点の位置 / ◇: 上下でカーブを曲げる / ▼: 左右で鳴らす終わり (短く・長く)\n横にドラッグ: ブロックを移動\n上下にドラッグ: そのブロックの振り幅\n右端・左端をドラッグ: そのブロックの長さ(縮めるとマスが空き、空きマスへは伸ばせます)\n右クリック: パターン・速さ・高さの変更、波形の編集、削除\n空いているマス: クリック/ドラッグで範囲を選んで、パターンを追加\n「ミュート」をオン: なぞった所の音を消す"
+                                       : "Click a block: next pattern (Shift+click: previous, mouse wheel also works)\nOn a block: drag ● left/right to move the peak, ◇ up/down to bend the curve, ▼ left/right for the sound end\nDrag sideways: move the block\nDrag up/down: depth of that block\nDrag the right or left edge: block length (shortening frees steps; you can also stretch into empty steps)\nRight-click: change pattern, rate, pitch, edit the wave, or delete\nEmpty steps: click or drag to select, then add a pattern\nMUTE on: drag to mute parts of a block"));
     rebuildTemplateList();
     shownPhraseVersion = -1; // 表示を更新させる
 
